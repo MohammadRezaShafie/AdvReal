@@ -1,0 +1,11 @@
+*.pyc
+__pycache__/
+results/
+runs/
+logs/
+data/
+*.zip
+demo
+detlib/HHDet
+weights/
+detlib/torchDet

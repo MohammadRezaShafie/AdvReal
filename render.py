@@ -22,6 +22,7 @@ from pytorch3d.renderer import (
     TexturesUV,
     SoftPhongShader
 )
+import torch.nn.functional as F
 import mesh_utils as MU
 import pytorch3d_modify as p3dmd
 from tps import *
@@ -191,6 +192,9 @@ class ImageRenderer:
         self.idx_man = torch.arange(self.n_man, device=self.device)
         self.idx_tshirt = torch.arange(self.n_tshirt, device=self.device) + self.n_man
         self.idx_trouser = torch.arange(self.n_trouser, device=self.device) + self.n_man + self.n_tshirt
+        # Some downstream utilities expect "infos_*" metadata; default to None when unavailable.
+        self.infos_tshirt = None
+        self.infos_trouser = None
         if not args.disable_tps2d:
             self.initialize_tps2d()
         self.deformer = None
@@ -410,6 +414,10 @@ class ImageRenderer:
             displacements = self.sample_nrsm_displacements(scale=self.args.nrsm_range)
             deformed_verts = self.apply_deformation(displacements)
             source_coordinate = deformed_verts
+        else:
+            # Use the original vertices when NRSM deformation is disabled
+            combined_full = MU.join_meshes([self.mesh_man, self.mesh_tshirt, self.mesh_trouser])
+            source_coordinate = combined_full.verts_packed().to(self.device)
         images_predicted = p3dmd.view_mesh_wrapped(
             [self.mesh_man, self.mesh_tshirt, self.mesh_trouser],
             [None, locations_tshirt, locations_trouser],

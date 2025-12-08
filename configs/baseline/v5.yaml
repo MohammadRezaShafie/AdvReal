@@ -3,7 +3,7 @@ DATA:
   AUGMENT: 0
 
   TRAIN:
-    IMG_DIR: '/home/wang/Desktop/wjl-project-1/Adversarial_camou_tsea_jianjie/data/INRIAPerson/Train/pos'
+    IMG_DIR: 'data/INRIAPerson/Train/pos'
     LAB_DIR:
 
 DETECTOR:

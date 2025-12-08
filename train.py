@@ -4,6 +4,12 @@ Training code for Adversarial patch training
 import ssl
 import certifi
 ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    module=r"torch\.nn\.functional",
+)
 import sys
 import os
 import time
@@ -53,7 +59,7 @@ def init(detector_attacker: UniversalAttacker, cfg: ConfigParser, data_root: str
 
 def collate_fn(batch):
     return batch
-def get_nuscenes_loader(img_dir, batch_size=4, shuffle=True, num_workers=4, transform=None):
+def get_nuscenes_loader(img_dir, batch_size=4, shuffle=True, num_workers=2, transform=None):
     dataset = NuScenesDataset(img_dir, transform=transform)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, collate_fn=collate_fn)
     return loader
@@ -127,7 +133,7 @@ class PatchTrainer(object):
             img_dir='data/background_trans/background_train_resize',  # 根据您的目录结构修改
             batch_size=args.batch_size,
             shuffle=True,
-            num_workers=4,
+            num_workers=args.num_workers,
             transform=transforms.ToTensor()
         )
 
@@ -170,10 +176,12 @@ class PatchTrainer(object):
 
 
     def get_loader(self, img_dir, shuffle=True):
-        loader = torch.utils.data.DataLoader(InriaDataset(img_dir, self.img_size, shuffle=shuffle),
-                                             batch_size=self.batch_size,
-                                             shuffle=True,
-                                             num_workers=4)
+        loader = torch.utils.data.DataLoader(
+            InriaDataset(img_dir, self.img_size, shuffle=shuffle),
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.args.num_workers,
+        )
         return loader
 
     def init_tensorboard(self, name=None):
@@ -190,6 +198,8 @@ class PatchTrainer(object):
         :return: Nothing
         """
         self.writer = self.init_tensorboard()
+        # Ensure results directory exists for saving patches
+        os.makedirs(self.args.save_path, exist_ok=True)
         args = self.args
         
         et0 = time.time()
@@ -316,6 +326,13 @@ class PatchTrainer(object):
             print("#####################   AdvReal  #####################")
             print('  EPOCH TIME: ', et1 - et0)
             print('  EPOCH LOSS: ', ep_loss)
+            # Save current adversarial patch snapshot each epoch
+            try:
+                patch_to_save = detector_attacker.universal_patch.detach().clamp(0,1).cpu()
+                from torchvision.utils import save_image
+                save_image(patch_to_save, os.path.join(self.args.save_path, f"patch_epoch_{epoch}.png"))
+            except Exception as e:
+                print(f"Warning: failed to save patch image: {e}")
             self.writer.add_scalar('epoch/3D_DET_loss', ep_3d_det_loss, epoch)
             self.writer.add_scalar('epoch/2D_DET_loss', ep_patch_det_loss, epoch)
             self.writer.add_scalar('epoch/2D_TV_loss', ep_patch_tv_loss, epoch)
@@ -334,6 +351,7 @@ if __name__ == '__main__':
     parser.add_argument('--nepoch', type=int, default=800, help='')
     parser.add_argument('--checkpoints', type=int, default=0, help='')
     parser.add_argument('--batch_size', type=int, default=2, help='')
+    parser.add_argument('--num_workers', type=int, default=4, help='dataloader workers (set <= number of CPU cores)')
     parser.add_argument('--save_path', default='results/demo', help='')
     parser.add_argument("--tv_loss", type=float, default=1, help='tv loss weight')
     parser.add_argument("--real_loss", type=float, default=0.5, help='real loss weight')
