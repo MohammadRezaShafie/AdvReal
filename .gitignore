@@ -6,6 +6,22 @@ logs/
 data/
 *.zip
 demo
-detlib/HHDet
 weights/
 detlib/torchDet
+
+# --- FIXED SECTION ---
+
+# 1. Ignore everything INSIDE detlib/HHDet, but not the folder itself
+detlib/HHDet/*
+
+# 2. Whitelist (allow) the specific subdirectories so Git can enter them
+!detlib/HHDet/yolov5/
+!detlib/HHDet/yolov11/
+
+# 3. Ignore everything inside those subdirectories (to keep them clean)
+detlib/HHDet/yolov5/*
+detlib/HHDet/yolov11/*
+
+# 4. Finally, un-ignore the specific API files
+!detlib/HHDet/yolov5/api.py
+!detlib/HHDet/yolov11/api.py
