@@ -46,9 +46,7 @@ class HHYolov11(DetectorBase):
 
     def __call__(self, batch_tensor, **kwargs):
         
-        print(f"batch_tensor Shape: {batch_tensor.shape}")
         detections_with_grad = self.detector(batch_tensor, augment=False, visualize=False)[0]
-        print(f"detections_with_grad Shape: {detections_with_grad.shape}")
         detections_with_grad_clone = detections_with_grad.clone()
         preds = non_max_suppression(detections_with_grad_clone, self.conf_thres, self.iou_thres)
         cls_max_ids = None
