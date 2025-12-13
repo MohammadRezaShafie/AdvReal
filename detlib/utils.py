@@ -66,6 +66,17 @@ def init_detector(detector_name: str, cfg: object, device: torch.device =torch.d
             model_weights=os.path.join(DET_LIB, 'HHDet/yolov5/yolov5/weight/yolov5s.pt'),
             model_config=os.path.join(DET_LIB, model_config)
         )
+    elif detector_name == "yolov11":
+        # YOLOv11 via Ultralytics API
+        from detlib.HHDet import HHYolov11
+        detector = HHYolov11(name=detector_name, cfg=cfg, device=device)
+        # Default weights path; adjust as needed
+        try:
+            weights_path = os.path.join(DET_LIB, 'HHDet/yolov11/weights/yolo11s.pt')
+            detector.load(model_weights=weights_path)
+        except Exception as e:
+            print(f"Warning: Could not load YOLOv11 weights: {e}")
+        detector.load(model_weights=weights_path)
 
     elif detector_name == "ddetr":
         from detlib.HHDet import HHDDETR
