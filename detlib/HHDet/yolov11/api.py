@@ -1,64 +1,99 @@
 import torch
 import numpy as np
-from .yolov5.utils.general import non_max_suppression, scale_coords
+# Import Ultralytics NMS as 'ul_nms' to avoid conflict with legacy YOLOv5 functions
+from ultralytics.utils.ops import non_max_suppression as ul_nms
 from ...base import DetectorBase
-from ultralytics import YOLO
-
-def scale_coords(img1_shape, coords, img0_shape, ratio_pad=None):
-    # Rescale coords (xyxy) from img1_shape to img0_shape
-    if ratio_pad is None:  # calculate from img0_shape
-        gain = min(img1_shape[0] / img0_shape[0], img1_shape[1] / img0_shape[1])  # gain  = old / new
-        pad = (img1_shape[1] - img0_shape[1] * gain) / 2, (img1_shape[0] - img0_shape[0] * gain) / 2  # wh padding
-    else:
-        gain = ratio_pad[0][0]
-        pad = ratio_pad[1]
-
-    coords[:, [0, 2]] -= pad[0]  # x padding
-    coords[:, [1, 3]] -= pad[1]  # y padding
-    coords[:, :4] /= gain
-    clip_coords(coords, img0_shape)
-    return coords
-
-
-def clip_coords(boxes, shape):
-    # Clip bounding xyxy bounding boxes to image shape (height, width)
-    if isinstance(boxes, torch.Tensor):  # faster individually
-        boxes[:, 0].clamp_(0, shape[1])  # x1
-        boxes[:, 1].clamp_(0, shape[0])  # y1
-        boxes[:, 2].clamp_(0, shape[1])  # x2
-        boxes[:, 3].clamp_(0, shape[0])  # y2
-    else:  # np.array (faster grouped)
-        boxes[:, [0, 2]] = boxes[:, [0, 2]].clip(0, shape[1])  # x1, x2
-        boxes[:, [1, 3]] = boxes[:, [1, 3]].clip(0, shape[0])  # y1, y2
-
 
 class HHYolov11(DetectorBase):
+    """
+    Robust Detector wrapper for YOLOv11.
+    Fixes the 'Garbage Output' (413 confidence) issue by forcing correct NMS usage.
+    """
+
     def __init__(self, name, cfg, input_tensor_size=640, device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu")):
         super().__init__(name, cfg, input_tensor_size, device)
         self.imgsz = (input_tensor_size, input_tensor_size)
-        self.stride, self.pt = None, None
+        self.device = device
+        self.detector = None
+        
+        # Load NMS thresholds
+        self.conf_thres = getattr(self, 'conf_thres', 0.25)
+        self.iou_thres = getattr(self, 'iou_thres', 0.45)
 
     def load(self, model_weights, **args):
-        yolo_wrapper = YOLO(model_weights)
-        self.detector = yolo_wrapper.model.to(self.device)
-        self.detector.load_state_dict(torch.load(model_weights, map_location=self.device)['model'].float().state_dict())
-        self.eval()
+        try:
+            from ultralytics import YOLO
+            # 1. Load the YOLO wrapper
+            yolo_wrapper = YOLO(model_weights)
+            
+            # 2. Extract the underlying PyTorch model (nn.Module)
+            self.detector = yolo_wrapper.model.to(self.device)
+            self.detector.eval()
+            self.names = self.detector.names
+            
+        except Exception as e:
+            raise RuntimeError(f"Failed to load YOLOv11 model: {e}")
 
     def __call__(self, batch_tensor, **kwargs):
+        assert self.detector is not None, "Model not loaded"
         
-        detections_with_grad = self.detector(batch_tensor, augment=False, visualize=False)[0]
-        detections_with_grad_clone = detections_with_grad.clone()
-        preds = non_max_suppression(detections_with_grad_clone, self.conf_thres, self.iou_thres)
-        cls_max_ids = None
+        batch_tensor = batch_tensor.to(self.device)
+        B, _, H, W = batch_tensor.shape
+
+        # --- 1. Forward Pass (Get Raw Output) ---
+        # YOLOv11 Raw Output Shape: [B, 84, 8400] (for 80 classes)
+        # Rows 0-3: x, y, w, h (in pixels)
+        # Rows 4-83: Class probabilities
+        preds = self.detector(batch_tensor)
+        
+        if isinstance(preds, (list, tuple)):
+            preds = preds[0]
+
+        # --- 2. Create 'Objectness' for Attack Gradients ---
+        # The Attack loop expects [B, Anchors, 84] to calculate gradients.
+        # So we transpose explicitly for this part.
+        preds_transposed = preds.transpose(-1, -2) # [B, 8400, 84]
+        
+        # Calculate max class probability to simulate "objectness"
+        pred_cls_logits = preds_transposed[..., 4:]
+        obj_confs = torch.sigmoid(pred_cls_logits).max(dim=-1).values
+
+        # --- 3. NMS for Visualization (CRITICAL FIX) ---
+        # We MUST pass the UN-TRANSPOSED [B, 84, 8400] tensor to Ultralytics NMS.
+        # It handles the dimensions internally.
+        nms_preds = ul_nms(
+            preds,  # <--- Passing the raw untransposed tensor
+            self.conf_thres, 
+            self.iou_thres, 
+            multi_label=False
+        )
+        
         bbox_array = []
-        for pred in preds:
-            box = scale_coords(batch_tensor.shape[-2:], pred, self.ori_size)
-            box[:, [0, 2]] /= self.ori_size[1]
-            box[:, [1, 3]] /= self.ori_size[0]
-            bbox_array.append(box)
-        obj_confs = detections_with_grad[..., 4]
-        self.raw_preds = detections_with_grad
-        output = {'bbox_array': bbox_array, 'obj_confs': obj_confs, 'cls_max_ids': cls_max_ids}
+        for det in nms_preds:
+            # det contains [x1, y1, x2, y2, conf, cls]
+            if det is None or len(det) == 0:
+                bbox_array.append(torch.empty((0, 6), device=self.device))
+                continue
+            
+            det_norm = det.clone()
+            
+            # --- 4. Normalize Correctly ---
+            # det contains pixels (e.g. 413.0). We must normalize to [0,1].
+            # Only divide if values are > 1.0 (Pixels).
+            if det_norm[:, :4].max() > 1.0:
+                det_norm[:, [0, 2]] /= W
+                det_norm[:, [1, 3]] /= H
+            
+            bbox_array.append(det_norm)
+
+        self.raw_preds = preds_transposed
+
+        output = {
+            'bbox_array': bbox_array, 
+            'obj_confs': obj_confs,
+            'cls_max_ids': None 
+        }
+        
         return output
 
     def parameters(self):
