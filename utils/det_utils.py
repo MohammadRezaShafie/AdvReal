@@ -7,6 +7,9 @@ import numpy as np
 import torch
 import torchvision
 import torch.nn.functional as F
+import cv2
+import numpy as np
+import math
 
 
 def pad_lab(lab, max_n: int, value: float = 0):
@@ -61,10 +64,15 @@ def plot_boxes_cv2(imgfile, boxes, class_names, savename=None):
     Returns:
         [cv2.image]: [cv2 type image with drawn boxes]
     """
-    if type(imgfile) == type(""):
+    if isinstance(imgfile, str):
         img = cv2.imread(imgfile)
     else:
         img = imgfile
+    
+    if img is None:
+        print(f"[DEBUG] Error: Image is None. Check path: {imgfile}")
+        return None
+
     img = np.copy(img)
     colors = np.array([[1, 0, 1], [0, 0, 1], [0, 1, 1], [0, 1, 0], [1, 1, 0], [1, 0, 0]], dtype=np.float32)
 
@@ -78,6 +86,9 @@ def plot_boxes_cv2(imgfile, boxes, class_names, savename=None):
 
     width = img.shape[1]
     height = img.shape[0]
+
+    # [DEBUG] Print summary of input
+
     for i in range(len(boxes)):
         box = boxes[i]
         x1 = int(box[0] * width)
@@ -86,33 +97,45 @@ def plot_boxes_cv2(imgfile, boxes, class_names, savename=None):
         y2 = int(box[3] * height)
         bbox_thick = int(0.6 * (height + width) / 600)
         rgb = (255, 0, 0)
-        if len(box) >= 6 and class_names:
+
+        if len(box) >= 6:
             cls_conf = box[4]
             cls_id = int(box[5])
-            # print('%s: %f' % (class_names[cls_id], cls_conf))
-            classes = len(class_names)
-            offset = cls_id * 123457 % classes
-            red = get_color(2, offset, classes)
-            green = get_color(1, offset, classes)
-            blue = get_color(0, offset, classes)
-            rgb = (red, green, blue)
-            if class_names[cls_id] == "":
-                continue
-            # print(cls_id)
-            msg = str(class_names[cls_id]) + " " + str(round(cls_conf, 3))
-            t_size = cv2.getTextSize(msg, 0, 0.7, thickness=bbox_thick // 2)[0]
-            c1, c2 = (x1, y1), (x2, y2)
-            c3 = (c1[0] + t_size[0], c1[1] - t_size[1] - 3)
+            
+            
+            # Safe check before accessing list
+            if 0 <= cls_id < len(class_names):
+                classes = len(class_names)
+                offset = cls_id * 123457 % classes
+                red = get_color(2, offset, classes)
+                green = get_color(1, offset, classes)
+                blue = get_color(0, offset, classes)
+                rgb = (red, green, blue)
+                
+                label = class_names[cls_id]
+                if label == "":
+                    continue
 
-            cv2.rectangle(img, (x1, y1), (np.int(c3[0]), np.int(c3[1])), rgb, -1)
-            img = cv2.putText(img, msg, (c1[0], np.int(c1[1] - 2)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0),
-                              bbox_thick // 2, lineType=cv2.LINE_AA)
+                msg = str(label) + " " + str(round(cls_conf, 3))
+                t_size = cv2.getTextSize(msg, 0, 0.7, thickness=bbox_thick // 2)[0]
+                c1, c2 = (x1, y1), (x2, y2)
+                c3 = (c1[0] + t_size[0], c1[1] - t_size[1] - 3)
+                
+                try:
+                    cv2.rectangle(img, (x1, y1), (int(c3[0]), int(c3[1])), rgb, -1)
+                    img = cv2.putText(img, msg, (c1[0], int(c1[1] - 2)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0),
+                                    bbox_thick // 2, lineType=cv2.LINE_AA)
+                except Exception as e:
+                    print(f"[DEBUG] Error drawing text: {e}")
+            else:
+                 print(f"[DEBUG] Skipping box {i} due to invalid ID {cls_id}")
+
         img = cv2.rectangle(img, (x1, y1), (x2, y2), rgb, bbox_thick)
+
     if savename:
-        # print("save plot results to %s" % savename)
+        print("save plot results to %s" % savename)
         cv2.imwrite(savename, img)
     return img
-
 
 def rescale_boxes(boxes, current_dim, original_shape):
     """
