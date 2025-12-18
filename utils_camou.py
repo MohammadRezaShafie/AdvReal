@@ -488,6 +488,24 @@ def get_region_boxes_general(output, model, conf_thresh, name=None, img_size=416
             else:
                 combined_boxes = torch.empty((0,7), device=boxes.device)
             all_boxes.append(combined_boxes)
+    elif name == 'yolov11':
+        # YOLOv11 via Ultralytics wrapper HHYolov11
+        bbox_array = output['bbox_array']
+        all_boxes = []
+        for boxes in bbox_array:
+            # boxes: [x1,y1,x2,y2,conf,cls] normalized to [0,1]
+            boxes = boxes[boxes[:, 4] > conf_thresh]
+            if boxes.shape[0] > 0:
+                x_c = (boxes[:, 0] + boxes[:, 2]) / 2.0
+                y_c = (boxes[:, 1] + boxes[:, 3]) / 2.0
+                w = boxes[:, 2] - boxes[:, 0]
+                h = boxes[:, 3] - boxes[:, 1]
+                conf = boxes[:, 4]
+                cls_idx = boxes[:, 5]
+                combined_boxes = torch.stack([x_c, y_c, w, h, conf, conf, cls_idx], dim=1)
+            else:
+                combined_boxes = torch.empty((0, 7), device=boxes.device)
+            all_boxes.append(combined_boxes)
     else:
         raise ValueError
     if lab_filter is not None:
