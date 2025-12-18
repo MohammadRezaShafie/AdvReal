@@ -23,10 +23,10 @@ class OptimAttacker(BaseAttacker):
 
     def attack_loss(self, confs):
         # self.optimizer.zero_grad()
-        loss = self.loss_fn(confs=confs, patch=self.detector_attacker.universal_patch[0])
-        tv_loss, obj_loss = loss.values()
-        tv_loss = torch.max(self.cfg.tv_eta * tv_loss, torch.tensor(0.1).to(self.device))
+        loss_dict = self.loss_fn(confs=confs, patch=self.detector_attacker.universal_patch[0])
+        tv_loss_raw, obj_loss = loss_dict.values()
+        # Remove hard floor on TV to keep gradients alive even when small
+        tv_loss = self.cfg.tv_eta * tv_loss_raw
         loss = tv_loss.to(obj_loss.device) + obj_loss
         # out = {'loss': loss, 'det_loss': obj_loss, 'tv_loss': tv_loss}
-        
-        return loss,tv_loss,obj_loss
+        return loss, tv_loss, obj_loss
