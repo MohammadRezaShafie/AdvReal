@@ -50,6 +50,7 @@ from pytorch3d.renderer import (
     Textures
 )
 from pytorch3d.renderer.cameras import look_at_view_transform
+from easydict import EasyDict
 
 class MaxProbExtractor(nn.Module):
     def __init__(self, cls_id, num_cls):
@@ -366,6 +367,69 @@ class YOLOv5MaxProbExtractor(nn.Module):
                     num += top_scores.size(0)
                 else:
                     raise ValueError
+            else:
+                det_loss.append(ious.new([0.0])[0])
+                max_probs.append(ious.new([0.0])[0])
+        det_loss = torch.stack(det_loss).mean()
+        max_probs = torch.stack(max_probs)
+        return det_loss, max_probs
+
+class YOLOv11MaxProbExtractor(nn.Module):
+    def __init__(self, cls_id, num_cls, model, figsize):
+        super(YOLOv11MaxProbExtractor, self).__init__()
+        self.cls_id = cls_id
+        self.num_cls = num_cls
+        self.figsize = figsize
+        self.model = model
+        self.cfg = None
+
+    def forward(self, YOLOoutputs, gt, loss_type, iou_thresh):
+        det_loss = []
+        max_probs = []
+        box_all = utils_camou.get_region_boxes_general(YOLOoutputs, self.model, conf_thresh=0.2, name="yolov11")
+        for i in range(len(box_all)):
+            boxes = box_all[i]
+            if boxes.numel() == 0:
+                det_loss.append(torch.tensor(0.0, device=gt.device))
+                max_probs.append(torch.tensor(0.0, device=gt.device))
+                continue
+            w_center = boxes[..., 0]
+            h_center = boxes[..., 1]
+            w_width = boxes[..., 2]
+            h_height = boxes[..., 3]
+            conf = boxes[..., 4]
+            cls_idx = boxes[..., 6].long()
+            w1 = w_center - w_width / 2
+            h1 = h_center - h_height / 2
+            w2 = w_center + w_width / 2
+            h2 = h_center + h_height / 2
+            bbox = torch.stack([w1, h1, w2, h2], dim=-1)
+            ious = torchvision.ops.box_iou(bbox.view(-1, 4) * self.figsize, gt[i].unsqueeze(0)).squeeze(-1)
+            mask = ious.ge(iou_thresh)
+            # choose attack class from cfg if available else default to 0
+            attack_cls = int(getattr(self.cfg, 'ATTACKER', EasyDict(ATTACK_CLASS='0')).ATTACK_CLASS)
+            mask = mask & (cls_idx == attack_cls)
+            valid_ious = ious[mask]
+            valid_scores = conf[mask]
+            if valid_scores.numel() > 0:
+                if loss_type == 'max_iou':
+                    # choose max confidence among overlapped boxes
+                    det_loss.append(valid_scores.max())
+                    max_probs.append(valid_scores.max())
+                elif loss_type == 'max_conf':
+                    det_loss.append(valid_scores.max())
+                    max_probs.append(valid_scores.max())
+                elif hasattr(self, 'cfg') and hasattr(self.cfg, 'topx_conf'):
+                    topx = self.cfg.topx_conf
+                    sorted_scores, _ = torch.sort(valid_scores, descending=True)
+                    top_scores = sorted_scores[:topx]
+                    mean_conf = top_scores.mean()
+                    det_loss.append(mean_conf)
+                    max_probs.append(mean_conf)
+                else:
+                    # default to max_conf behavior
+                    det_loss.append(valid_scores.max())
+                    max_probs.append(valid_scores.max())
             else:
                 det_loss.append(ious.new([0.0])[0])
                 max_probs.append(ious.new([0.0])[0])
