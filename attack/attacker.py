@@ -33,6 +33,9 @@ class UniversalAttacker(object):
         self.patch_applier = PatchRandomApplier(device, cfg_patch=cfg.ATTACKER.PATCH)
         self.detectors = init_detectors(cfg_det=cfg.DETECTOR)
 
+        # Simple visualization counter to avoid overwrites
+        self._vis_counter = 0
+
         # differentiable Kornia augmentation method
         # self.data_transformer = DataTransformer(device, rand_rotate=0)
 
@@ -116,6 +119,9 @@ class UniversalAttacker(object):
         if adv_patch is None: adv_patch = self.universal_patch
         img_tensor = self.patch_applier(img_tensor, adv_patch, self.all_preds)
 
+        # Clamp to valid range expected by detectors (Ultralytics expects [0,1])
+        img_tensor = img_tensor.float().clamp(0.0, 1.0)
+
         # 1st inference: get bbox; 2rd inference: get detections of the adversarial patch
 
         # If you wanna augment data here, use the provided differentiable Kornia augmentation method:
@@ -140,17 +146,61 @@ class UniversalAttacker(object):
             all_preds[i] = all_pred if all_pred.shape[0] else pred
         return all_preds
 
-    def detect_bbox(self, img_batch, detectors=None):
+    def detect_bbox(self, img_batch, save_path=None, detectors=None):
         # print("detector:", self.detector)
         if detectors is None:
             detectors = self.detectors
         all_preds = None
         for detector in detectors:
-            preds = detector(img_batch.to(detector.device))['bbox_array']
+            try:
+                preds = detector(img_batch.to(detector.device))['bbox_array']
+            except Exception as e:
+                print(e)
             all_preds = self.merge_batch(all_preds, preds)
-
         # nms among detectors
         if len(detectors) > 1: all_preds = inter_nms(all_preds)
+
+        # Visualization: overlay detected boxes on input images and save alongside raw inputs
+        # try:
+        #     import os
+        #     import cv2
+        #     from utils import FormatConverter
+        #     # Prefer user-provided save_path from config/args; save directly into that folder
+        #     vis_root = save_path if isinstance(save_path, str) and len(save_path) > 0 else os.path.join('results')
+        #     input_dir = os.path.join(vis_root, 'input')
+        #     output_dir = os.path.join(vis_root, 'output')
+        #     os.makedirs(input_dir, exist_ok=True)
+        #     os.makedirs(output_dir, exist_ok=True)
+        #     # Iterate over batch elements and save per-image visualization
+        #     if isinstance(all_preds, list) and hasattr(img_batch, 'shape'):
+        #         B = min(len(all_preds), img_batch.shape[0])
+        #         for bi in range(B):
+        #             img_np = FormatConverter.tensor2numpy_cv2(img_batch[bi].detach().cpu())
+        #             # Save raw input without boxes; use unique names to avoid overwrites
+        #             raw_path = os.path.join(input_dir, f'raw_{self._vis_counter:06d}_{bi}.png')
+        #             try:
+        #                 cv2.imwrite(raw_path, img_np)
+        #             except Exception as e:
+        #                 print(f"Error saving raw image: {e}")
+        #             # Accumulate boxes from all detectors for this image
+        #             boxes = all_preds[bi]
+        #             if isinstance(boxes, torch.Tensor):
+        #                 boxes_to_plot = boxes.detach().cpu().numpy()
+        #             else:
+        #                 # Expect Nx6 tensor-like; fallback to empty
+        #                 boxes_to_plot = np.asarray(boxes) if boxes is not None else np.zeros((0,6))
+        #             vis_path = os.path.join(output_dir, f'vis_{self._vis_counter:06d}_{bi}.png')
+        #             try:
+        #                 plot_boxes_cv2(img_np.copy(), boxes_to_plot, self.class_names, savename=vis_path)
+        #             except IndexError:
+        #                 # Fallback if plot_boxes_cv2 fails internally
+        #                 print(f"Skipping plot for img {bi} due to index error.")
+        #         # Increment counter once per call
+        #         self._vis_counter += 1
+        # except Exception as e:
+        #     print(e)
+        #     # Non-fatal: skip visualization if any error occurs
+        #     # pass
         return all_preds
 
     def attack(self, img_tensor_batch, mode='sequential'):
