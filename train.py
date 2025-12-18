@@ -33,18 +33,21 @@ from utils.parser import logger
 from utils.plot import VisualBoard
 from torch.utils.data import DataLoader
 from utils.utils import *
+import utils_camou
 sys.path.append(os.path.abspath(''))
 from arch.yolov3_models import YOLOv3Darknet
 from yolo2.darknet import Darknet
 from color_util import *
 from render import ImageRenderer
+
 def init(detector_attacker: UniversalAttacker, cfg: ConfigParser, data_root: str, args: object =None, log: bool =True):
     if log: logger(cfg, args)
 
     data_sampler = None
     data_loader_tsea = dataLoader(data_root,
                              input_size=cfg.DETECTOR.INPUT_SIZE, is_augment=cfg.DATA.AUGMENT,
-                             batch_size=cfg.DETECTOR.BATCH_SIZE, sampler=data_sampler, shuffle=True)
+                             batch_size=cfg.DETECTOR.BATCH_SIZE, sampler=data_sampler, shuffle=True,
+                             num_workers=(args.num_workers if args and hasattr(args, 'num_workers') else 4))
 
     detector_attacker.init_universal_patch(args.patch)
     detector_attacker.init_attaker()
@@ -106,6 +109,22 @@ class PatchTrainer(object):
             self.model.load(model_weights, model_config=model_config)
             self.model.eval()
             self.model_parameters = self.model.parameters()
+        elif args.arch == "yolov11":
+            from detlib.HHDet.yolov11.api import HHYolov11
+            cfg = ConfigParser("configs/baseline/v11.yaml")
+            detector_cfg = cfg.DETECTOR
+            input_size = self.img_size
+            self.model = HHYolov11(
+                name="YOLOV11",
+                cfg=detector_cfg,
+                input_tensor_size=input_size,
+                device=device,
+            )
+            # default weights path
+            model_weights = 'detlib/HHDet/yolov11/weights/yolo11s.pt'
+            self.model.load(model_weights)
+            self.model.eval()
+            self.model_parameters = self.model.parameters()
         elif args.arch == "mask_rcnn":
             self.model = torchvision.models.detection.maskrcnn_resnet50_fpn(pretrained=True).eval().to(device)
         else:
@@ -127,6 +146,8 @@ class PatchTrainer(object):
             self.prob_extractor = DeformableDetrProbExtractor(0,80,self.img_size).to(device)
         elif args.arch == "yolov5":
             self.prob_extractor = YOLOv5MaxProbExtractor(0, 80, self.model, self.img_size).to(device)
+        elif args.arch == "yolov11":
+            self.prob_extractor = YOLOv11MaxProbExtractor(0, 80, self.model, self.img_size).to(device)
         self.tv_loss = TotalVariation()
 
         self.train_loader = get_nuscenes_loader(
@@ -173,6 +194,12 @@ class PatchTrainer(object):
         self.faces_trouser = self.mesh_trouser.textures.faces_uvs_padded()
         self.verts_uv_trouser = self.mesh_trouser.textures.verts_uvs_padded()
         self.faces_uvs_trouser = self.mesh_trouser.textures.faces_uvs_list()[0]
+
+        # Class names for plotting detections (COCO80)
+        try:
+            self.class_names = utils_camou.load_class_names('configs/namefiles/coco80.names')
+        except Exception:
+            self.class_names = None
 
 
     def get_loader(self, img_dir, shuffle=True):
@@ -240,7 +267,7 @@ class PatchTrainer(object):
 
                 img_tensor_batch = img_tensor_batch.to(detector_attacker.device, non_blocking=True)
 
-                all_preds = detector_attacker.detect_bbox(img_tensor_batch)
+                all_preds = detector_attacker.detect_bbox(img_tensor_batch,self.args.save_path,)
 
                 target_nums = detector_attacker.get_patch_pos_batch(all_preds)
 
@@ -262,6 +289,32 @@ class PatchTrainer(object):
                 p_img_batch = p_img_batch[:, :3, :, :]
                 gts_batch = torch.stack(all_gts).to(self.device)
                 t1 = time.time()
+                # Ensure inputs are normalized to [0,1] for detectors like YOLOv11
+                p_img_batch = p_img_batch.float()
+                # If composite images are in 0-255 range, bring to 0-1
+                if torch.isfinite(p_img_batch).all() and p_img_batch.max() > 1.0:
+                    p_img_batch = p_img_batch / 255.0
+                p_img_batch = p_img_batch.clamp(0.0, 1.0)
+                if epoch % 20 == 0:
+                    if i_batch % 100 == 0: 
+                        try:
+                            from torchvision.utils import save_image
+                            
+                            # Create 'composite' directory inside the save_path
+                            comp_dir = os.path.join(self.args.save_path, 'composite')
+                            os.makedirs(comp_dir, exist_ok=True)
+                            
+                            # Save each image in the current batch
+                            for img_idx, img_tensor in enumerate(p_img_batch):
+                                if img_idx % 4 == 0:
+                                    # Construct a unique filename: epoch_batch_index.png
+                                    filename = f"epoch_{epoch:03d}_batch_{i_batch:04d}_idx_{img_idx}.jpg"
+                                    save_path = os.path.join(comp_dir, filename)
+                                    save_image(img_tensor, save_path)
+                                
+                        except Exception as e:
+                            print(f"Warning: Failed to save composite image: {e}")
+                            
                 normalize = True
                 if self.args.arch == "deformable-detr" and normalize:
                     normalize = transforms.Normalize([0.485, 0.456, 0.406],[0.229, 0.224, 0.225])
@@ -294,9 +347,15 @@ class PatchTrainer(object):
                 ep_3d_det_loss += det_loss.item()
                 ep_loss += loss.item()
                 
+                # Backprop and update patch; monitor gradient and delta for debugging
+                patch_before = patch.detach().clone()
                 loss.backward()
-                optimizer.step()                
+                grad_mean = (patch.grad.abs().mean().item() if patch.grad is not None else 0.0)
+                optimizer.step()
                 patch.clamp(0, 1)
+                delta_mean = (patch.detach() - patch_before).abs().mean().item()
+                if i_batch % 10 == 0:
+                    print(f"[Debug] grad|patch: mean={grad_mean:.6f}, delta_mean={delta_mean:.6f}")
                     
                 if i_batch % 10 == 0:
                     global_step = epoch * len(self.train_loader) + i_batch
@@ -327,12 +386,14 @@ class PatchTrainer(object):
             print('  EPOCH TIME: ', et1 - et0)
             print('  EPOCH LOSS: ', ep_loss)
             # Save current adversarial patch snapshot each epoch
-            try:
-                patch_to_save = detector_attacker.universal_patch.detach().clamp(0,1).cpu()
-                from torchvision.utils import save_image
-                save_image(patch_to_save, os.path.join(self.args.save_path, f"patch_epoch_{epoch}.png"))
-            except Exception as e:
-                print(f"Warning: failed to save patch image: {e}")
+            
+            if epoch % 10 == 0 or epoch == args.nepoch - 1:
+                try:
+                    patch_to_save = detector_attacker.universal_patch.detach().clamp(0,1).cpu()
+                    from torchvision.utils import save_image
+                    save_image(patch_to_save, os.path.join(self.args.save_path, f"patch_epoch_{epoch}.png"))
+                except Exception as e:
+                    print(f"Warning: failed to save patch image: {e}")
             self.writer.add_scalar('epoch/3D_DET_loss', ep_3d_det_loss, epoch)
             self.writer.add_scalar('epoch/2D_DET_loss', ep_patch_det_loss, epoch)
             self.writer.add_scalar('epoch/2D_TV_loss', ep_patch_tv_loss, epoch)
