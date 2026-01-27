@@ -44,7 +44,7 @@ def init(detector_attacker: UniversalAttacker, cfg: ConfigParser, data_root: str
     if log: logger(cfg, args)
 
     data_sampler = None
-    data_loader_tsea = dataLoader(data_root,
+    person_detection_loader = dataLoader(data_root,
                              input_size=cfg.DETECTOR.INPUT_SIZE, is_augment=cfg.DATA.AUGMENT,
                              batch_size=cfg.DETECTOR.BATCH_SIZE, sampler=data_sampler, shuffle=True,
                              num_workers=(args.num_workers if args and hasattr(args, 'num_workers') else 4))
@@ -58,7 +58,7 @@ def init(detector_attacker: UniversalAttacker, cfg: ConfigParser, data_root: str
                               optimizer=detector_attacker.attacker)
         detector_attacker.vlogger = vlogger
 
-    return data_loader_tsea, vlogger
+    return person_detection_loader, vlogger
 
 def collate_fn(batch):
     return batch
@@ -150,7 +150,7 @@ class PatchTrainer(object):
             self.prob_extractor = YOLOv11MaxProbExtractor(0, 80, self.model, self.img_size).to(device)
         self.tv_loss = TotalVariation()
 
-        self.train_loader = get_nuscenes_loader(
+        self.background_loader = get_nuscenes_loader(
             img_dir='data/background_trans/background_train_resize',  # 根据您的目录结构修改
             batch_size=args.batch_size,
             shuffle=True,
@@ -158,7 +158,7 @@ class PatchTrainer(object):
             transform=transforms.ToTensor()
         )
 
-        self.epoch_length = len(self.train_loader)
+        self.epoch_length = len(self.background_loader)
 
 
         color_transform = ColorTransform('color_transform_dim6.npz')
@@ -234,7 +234,7 @@ class PatchTrainer(object):
         cfg = ConfigParser(args.cfg)
         detector_attacker = UniversalAttacker(cfg, self.device)
         data_root = cfg.DATA.TRAIN.IMG_DIR
-        data_loader_tsea, vlogger = init(detector_attacker, cfg, args=args, data_root=data_root)
+        person_detection_loader, vlogger = init(detector_attacker, cfg, args=args, data_root=data_root)
         patch = detector_attacker.universal_patch
         patch.requires_grad_(True)
         optimizer = optim.Adam([patch], lr=args.lr, amsgrad=True)
@@ -251,28 +251,28 @@ class PatchTrainer(object):
             ep_loss = 0
             eff_count = 0
             eff_count_patch = 0  
-            data_iter_tsea = iter(data_loader_tsea)
-            for i_batch, img_batch in enumerate(self.train_loader):
+            person_detection_iter = iter(person_detection_loader)
+            for i_batch, bg_batch in enumerate(self.background_loader):
                 optimizer.zero_grad()
                 t0 = time.time()
                 try:
                     
-                    img_tensor_batch = next(data_iter_tsea)
+                    person_img_batch = next(person_detection_iter)
                     
                 except StopIteration:
-                    data_iter_tsea = iter(data_loader_tsea)
-                    img_tensor_batch = next(data_iter_tsea)
+                    person_detection_iter = iter(person_detection_loader)
+                    person_img_batch = next(person_detection_iter)
 
                 detector_attacker.universal_patch.to(self.device)
 
-                img_tensor_batch = img_tensor_batch.to(detector_attacker.device, non_blocking=True)
+                person_img_batch = person_img_batch.to(detector_attacker.device, non_blocking=True)
 
-                all_preds = detector_attacker.detect_bbox(img_tensor_batch,self.args.save_path,)
+                all_preds = detector_attacker.detect_bbox(person_img_batch,self.args.save_path,)
 
                 target_nums = detector_attacker.get_patch_pos_batch(all_preds)
 
                 if sum(target_nums) == 0: continue
-                patch_loss, patch_tv_loss, patch_det_loss = detector_attacker.attack(img_tensor_batch, mode='optim')
+                patch_loss, patch_tv_loss, patch_det_loss = detector_attacker.attack(person_img_batch, mode='optim')
                 eff_count_patch += 1
 
                 patch_c = patch.clone()
@@ -281,7 +281,7 @@ class PatchTrainer(object):
                 all_composite_images = []
                 all_gts = []
                 
-                for bg_idx, bg_image_tensor in enumerate(img_batch):
+                for bg_idx, bg_image_tensor in enumerate(bg_batch):
                     composite_images, gts = self.renderer_v3.generate_composite_image_tensor(bg_image_tensor)  # composite_images: List of tensors
                     all_composite_images.extend(composite_images) 
                     all_gts.extend(gts)
@@ -358,12 +358,12 @@ class PatchTrainer(object):
                     print(f"[Debug] grad|patch: mean={grad_mean:.6f}, delta_mean={delta_mean:.6f}")
                     
                 if i_batch % 10 == 0:
-                    global_step = epoch * len(self.train_loader) + i_batch
+                    global_step = epoch * len(self.background_loader) + i_batch
                     self.writer.add_scalar('batch/3D_DET_loss', det_loss.item(), global_step)
                     self.writer.add_scalar('batch/Total_loss', loss.item(), global_step)
                     self.writer.add_scalar('batch/2D_DET_loss', patch_det_loss.item(), global_step)
                     self.writer.add_scalar('batch/2D_TV_loss', patch_tv_loss.item(), global_step)
-                del patch_loss, patch_det_loss, patch_tv_loss, det_loss, img_batch, img_tensor_batch, all_composite_images, all_gts, p_img_batch, gts_batch, gts
+                del patch_loss, patch_det_loss, patch_tv_loss, det_loss, bg_batch, person_img_batch, all_composite_images, all_gts, p_img_batch, gts_batch, gts
                 gc.collect()
                 
             del patch_c, composite_images
