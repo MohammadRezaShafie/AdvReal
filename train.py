@@ -1,8 +1,14 @@
 """
 Training code for Adversarial patch training
+کد آموزش برای تولید وصله‌های متخاصم (Adversarial Patch)
+
+This module implements physical adversarial patch generation for attacking object detection models.
+این ماژول تولید وصله‌های متخاصم فیزیکی را برای حمله به مدل‌های تشخیص اشیاء پیاده‌سازی می‌کند.
 """
 import ssl
 import certifi
+# SSL configuration for certificate verification
+# پیکربندی SSL برای تایید گواهینامه
 ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
 import warnings
 warnings.filterwarnings(
@@ -41,14 +47,28 @@ from color_util import *
 from render import ImageRenderer
 
 def init(detector_attacker: UniversalAttacker, cfg: ConfigParser, data_root: str, args: object =None, log: bool =True):
+    """Initialize the training environment including data loader, attacker, and logger.
+    مقداردهی اولیه محیط آموزش شامل بارگذار داده، مهاجم و ثبت‌کننده.
+    
+    Args:
+        detector_attacker: Universal attacker instance / نمونه مهاجم جهانی
+        cfg: Configuration parser / تحلیل‌گر پیکربندی
+        data_root: Root directory of training data / دایرکتوری اصلی داده‌های آموزش
+        args: Command line arguments / آرگومان‌های خط فرمان
+        log: Enable logging / فعال‌سازی ثبت رویدادها
+    """
     if log: logger(cfg, args)
 
     data_sampler = None
+    # Initialize data loader for person detection images
+    # مقداردهی اولیه بارگذار داده برای تصاویر تشخیص افراد
     person_detection_loader = dataLoader(data_root,
                              input_size=cfg.DETECTOR.INPUT_SIZE, is_augment=cfg.DATA.AUGMENT,
                              batch_size=cfg.DETECTOR.BATCH_SIZE, sampler=data_sampler, shuffle=True,
                              num_workers=(args.num_workers if args and hasattr(args, 'num_workers') else 4))
 
+    # Initialize the universal adversarial patch
+    # مقداردهی اولیه وصله متخاصم جهانی
     detector_attacker.init_universal_patch(args.patch)
     detector_attacker.init_attaker()
 
@@ -70,8 +90,19 @@ def get_nuscenes_loader(img_dir, batch_size=4, shuffle=True, num_workers=2, tran
 
 
 class PatchTrainer(object):
+    """Main trainer class for adversarial patch generation using 3D rendering.
+    کلاس آموزش‌دهنده اصلی برای تولید وصله متخاصم با استفاده از رندر سه‌بعدی.
+    
+    This class combines 2D and 3D adversarial attacks by:
+    این کلاس حملات متخاصم دوبعدی و سه‌بعدی را ترکیب می‌کند:
+    1. Applying adversarial patches to 2D images / اعمال وصله‌های متخاصم به تصاویر دوبعدی
+    2. Rendering 3D meshes with adversarial textures / رندر مش‌های سه‌بعدی با بافت‌های متخاصم
+    3. Optimizing the patch to fool object detectors / بهینه‌سازی وصله برای فریب تشخیص‌دهنده‌های اشیاء
+    """
     def __init__(self, args):
         self.args = args
+        # Initialize 3D renderer for creating realistic adversarial examples
+        # مقداردهی اولیه رندرر سه‌بعدی برای ایجاد نمونه‌های متخاصم واقع‌گرایانه
         self.renderer_v3 = ImageRenderer(args) 
         if args.device is not None:
             device = torch.device(args.device)
@@ -79,12 +110,16 @@ class PatchTrainer(object):
         else:
             device = None
         self.device = device
-        self.img_size = 416
+        self.img_size = 416  # Standard YOLO input size / اندازه استاندارد ورودی YOLO
         self.DATA_DIR = "./data"
 
+        # Load the target detection model based on architecture argument
+        # بارگذاری مدل تشخیص هدف بر اساس آرگومان معماری
         if args.arch == "rcnn":
+            # Faster R-CNN with ResNet-50 backbone / Faster R-CNN با پشتیبان ResNet-50
             self.model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True).eval().to(device)
         elif args.arch == "yolov3":
+            # YOLOv3 Darknet architecture / معماری YOLOv3 Darknet
             self.model = YOLOv3Darknet().eval().to(device)
             self.model.load_darknet_weights('arch/weights/yolov3.weights')
         elif args.arch == "detr":
@@ -130,12 +165,18 @@ class PatchTrainer(object):
         else:
             raise NotImplementedError
 
+        # Freeze detector model parameters - we only optimize the adversarial patch
+        # انجماد پارامترهای مدل تشخیص‌دهنده - فقط وصله متخاصم بهینه می‌شود
         for p in self.model.parameters():
             p.requires_grad = False
 
         self.batch_size = args.batch_size
 
+        # Initialize patch transformer for applying patches to images
+        # مقداردهی اولیه تبدیل‌کننده وصله برای اعمال به تصاویر
         self.patch_transformer = PatchTransformer().to(device)
+        # Initialize probability extractors specific to each detector architecture
+        # مقداردهی اولیه استخراج‌کننده‌های احتمال مختص هر معماری تشخیص‌دهنده
         if args.arch == "rcnn":
             self.prob_extractor = MaxProbExtractor(0, 80).to(device)
         elif args.arch == "yolov2":
@@ -148,8 +189,12 @@ class PatchTrainer(object):
             self.prob_extractor = YOLOv5MaxProbExtractor(0, 80, self.model, self.img_size).to(device)
         elif args.arch == "yolov11":
             self.prob_extractor = YOLOv11MaxProbExtractor(0, 80, self.model, self.img_size).to(device)
+        # Total Variation loss for patch smoothness regularization
+        # تابع هزینه Total Variation برای منظم‌سازی نرمی وصله
         self.tv_loss = TotalVariation()
 
+        # Load background images for compositing 3D rendered objects
+        # بارگذاری تصاویر پس‌زمینه برای ترکیب اشیاء رندر شده سه‌بعدی
         self.background_loader = get_nuscenes_loader(
             img_dir='data/background_trans/background_train_resize',  # 根据您的目录结构修改
             batch_size=args.batch_size,
@@ -161,6 +206,8 @@ class PatchTrainer(object):
         self.epoch_length = len(self.background_loader)
 
 
+        # Color transformation utility for realistic colorization
+        # ابزار تبدیل رنگ برای رنگ‌آمیزی واقع‌گرایانه
         color_transform = ColorTransform('color_transform_dim6.npz')
         self.color_transform = color_transform.to(device)
 
@@ -174,6 +221,8 @@ class PatchTrainer(object):
         h, w, h_t, w_t = int(self.fig_size_H / resolution), int(self.fig_size_W / resolution), int(self.fig_size_H_t / resolution), int(self.fig_size_W_t / resolution)
         self.h, self.w, self.h_t, self.w_t = h, w, h_t, w_t
 
+        # Load 3D mesh models (human, t-shirt, trouser) for adversarial texture application
+        # بارگذاری مدل‌های مش سه‌بعدی (انسان، تی‌شرت، شلوار) برای اعمال بافت متخاصم
         # Set paths
         obj_filename_man = os.path.join(self.DATA_DIR, "Archive/Man_join/man.obj")
         obj_filename_tshirt = os.path.join(self.DATA_DIR, "Archive/tshirt_join/tshirt.obj")
@@ -221,22 +270,35 @@ class PatchTrainer(object):
 
     def train(self):
         """
-        Optimize a patch to generate an adversarial example.
+        Main training loop for optimizing adversarial patches.
+        حلقه آموزش اصلی برای بهینه‌سازی وصله‌های متخاصم.
+        
+        This function combines 2D and 3D adversarial examples:
+        این تابع نمونه‌های متخاصم دوبعدی و سه‌بعدی را ترکیب می‌کند:
+        1. Patches on 2D person images / وصله‌ها روی تصاویر دوبعدی افراد
+        2. 3D rendered meshes with adversarial textures / مش‌های سه‌بعدی رندر شده با بافت‌های متخاصم
         :return: Nothing
         """
         self.writer = self.init_tensorboard()
         # Ensure results directory exists for saving patches
+        # اطمینان از وجود دایرکتوری نتایج برای ذخیره وصله‌ها
         os.makedirs(self.args.save_path, exist_ok=True)
         args = self.args
         
         et0 = time.time()
         checkpoints = args.checkpoints
         cfg = ConfigParser(args.cfg)
+        # Initialize the universal attacker with the detector
+        # مقداردهی اولیه مهاجم جهانی با تشخیص‌دهنده
         detector_attacker = UniversalAttacker(cfg, self.device)
         data_root = cfg.DATA.TRAIN.IMG_DIR
         person_detection_loader, vlogger = init(detector_attacker, cfg, args=args, data_root=data_root)
+        # Get the adversarial patch and enable gradient computation
+        # دریافت وصله متخاصم و فعال‌سازی محاسبه گرادیان
         patch = detector_attacker.universal_patch
         patch.requires_grad_(True)
+        # Adam optimizer for patch parameters only
+        # بهینه‌ساز Adam فقط برای پارامترهای وصله
         optimizer = optim.Adam([patch], lr=args.lr, amsgrad=True)
 
         self.writer = self.init_tensorboard()

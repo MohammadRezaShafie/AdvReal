@@ -14,16 +14,30 @@ import tqdm
 
 
 def sigmoid(x):
+    """Sigmoid activation function.
+    تابع فعال‌سازی Sigmoid.
+    """
     return 1.0 / (math.exp(-x) + 1.)
 
 
 def softmax(x):
+    """Softmax function for probability normalization.
+    تابع Softmax برای نرمال‌سازی احتمال.
+    """
     x = torch.exp(x - torch.max(x))
     x = x / x.sum()
     return x
 
 
 def bbox_iou(box1, box2, x1y1x2y2=True):
+    """Calculate Intersection over Union (IoU) between two bounding boxes.
+    محاسبه اشتراک بر اتحاد (IoU) بین دو جعبه محدودکننده.
+    
+    :param box1: First bounding box / جعبه محدودکننده اول
+    :param box2: Second bounding box / جعبه محدودکننده دوم
+    :param x1y1x2y2: If True, boxes are in (x1,y1,x2,y2) format / فرمت جعبه‌ها
+    :return: IoU value between 0 and 1 / مقدار IoU بین ۰ و ۱
+    """
     if x1y1x2y2:
         mx = min(box1[0], box2[0])
         Mx = max(box1[2], box2[2])
@@ -34,6 +48,8 @@ def bbox_iou(box1, box2, x1y1x2y2=True):
         w2 = box2[2] - box2[0]
         h2 = box2[3] - box2[1]
     else:
+        # Center format: (cx, cy, w, h)
+        # فرمت مرکزی: (مرکز x، مرکز y، عرض، ارتفاع)
         mx = min(box1[0] - box1[2] / 2.0, box2[0] - box2[2] / 2.0)
         Mx = max(box1[0] + box1[2] / 2.0, box2[0] + box2[2] / 2.0)
         my = min(box1[1] - box1[3] / 2.0, box2[1] - box2[3] / 2.0)
@@ -50,6 +66,8 @@ def bbox_iou(box1, box2, x1y1x2y2=True):
     if cw <= 0 or ch <= 0:
         return 0.0
 
+    # Calculate intersection and union areas
+    # محاسبه مساحت اشتراک و اتحاد
     area1 = w1 * h1
     area2 = w2 * h2
     carea = cw * ch

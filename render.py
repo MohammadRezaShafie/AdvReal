@@ -38,25 +38,52 @@ from torchvision.transforms.functional import to_pil_image
 from NRSM import PrecomputedTPSDeformer
 
 def rgb_to_grayscale(source):
+    """Convert RGB image to grayscale using standard luminance coefficients.
+    تبدیل تصویر RGB به خاکستری با استفاده از ضرایب استاندارد درخشندگی.
+    
+    Uses weighted sum: 0.2989*R + 0.5870*G + 0.1140*B
+    از جمع وزن‌دار استفاده می‌کند: 0.2989*R + 0.5870*G + 0.1140*B
+    
+    :param source: RGB image tensor (C, H, W) / تنسور تصویر RGB
+    :return: Grayscale image tensor (1, H, W) / تنسور تصویر خاکستری
+    """
     grayscale = 0.2989 * source[0, :, :] + 0.5870 * source[1, :, :] + 0.1140 * source[2, :, :]
     grayscale = grayscale.unsqueeze(0)
     return grayscale
 
 def compute_relighting_params_tensor(source, target):
+    """Compute relighting parameters to match source lighting to target.
+    محاسبه پارامترهای روشنایی مجدد برای تطبیق نورپردازی مبدا با مقصد.
+    
+    Computes alpha (scale) and beta (shift) parameters for color transfer.
+    پارامترهای alpha (مقیاس) و beta (انتقال) را برای انتقال رنگ محاسبه می‌کند.
+    
+    :param source: Source image tensor / تنسور تصویر مبدا
+    :param target: Target image tensor / تنسور تصویر مقصد
+    :return: alpha, beta parameters / پارامترهای alpha و beta
+    """
     if source.dim() == 3:
         source = source.unsqueeze(0)
     if target.dim() == 3:
         target = target.unsqueeze(0)
+    # Resize target to match source dimensions
+    # تغییر اندازه مقصد برای تطبیق با ابعاد مبدا
     target_resized = F.interpolate(target, size=source.shape[2:], mode='bilinear', align_corners=False)
     source_np = source.clone()
     source_np = source_np.squeeze(0).permute(1,2,0).detach().cpu().numpy()
     target_resized_np = target_resized.squeeze(0).permute(1,2,0).detach().cpu().numpy()
+    # Compute mean and standard deviation for both images
+    # محاسبه میانگین و انحراف معیار برای هر دو تصویر
     mean_src = torch.mean(source)
     std_src = torch.std(source)
     mean_tar = torch.mean(target)
     std_tar = torch.std(target)
+    # SSIM-based similarity factor for adaptive relighting
+    # ضریب تشابه مبتنی بر SSIM برای روشنایی مجدد انطباقی
     ssim_score = ssim(source_np, target_resized_np, data_range=1, win_size=3, channel_axis=2)
     similarity_factor = 1 - ssim_score
+    # Adaptive coefficient computation based on similarity
+    # محاسبه ضریب انطباقی بر اساس تشابه
     if std_tar < std_src:
         a, b, c = 0.5, 0, 1
         alpha_coeff = a * (similarity_factor ** 2) + b * similarity_factor + c

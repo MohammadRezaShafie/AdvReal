@@ -1,6 +1,12 @@
 """
+Patch applier module for adversarial attacks.
+ماژول اعمال‌کننده وصله برای حملات متخاصم.
 
-This is not used since tons of tensors takes huge GPU memory
+Applies adversarial patches to images with various transformations.
+وصله‌های متخاصم را با تبدیلات مختلف به تصاویر اعمال می‌کند.
+
+Note: This is not used since tons of tensors take huge GPU memory.
+توجه: به دلیل مصرف حافظه GPU زیاد استفاده نمی‌شود.
 """
 import torch
 import torch.nn as nn
@@ -11,11 +17,18 @@ from .transformer import PatchTransformer
 from torchvision.transforms import ToPILImage
 
 class PatchRandomApplier(nn.Module):
+    """Apply adversarial patches with random transformations.
+    اعمال وصله‌های متخاصم با تبدیلات تصادفی.
+    """
     # apply patch
     def __init__(self, device: torch.device, cfg_patch: object):
         """
+        Initialize patch applier with transformation parameters.
+        مقداردهی اولیه اعمالکننده وصله با پارامترهای تبدیل.
 
-        :param rotate_angle: random rotate angle range from [-rotate_angle, rotate_angle]
+        :param device: Computing device / دستگاه پردازش
+        :param cfg_patch: Patch configuration object / شی پیکربندی وصله
+        :param rotate_angle: random rotate angle range [-rotate_angle, rotate_angle]
         :param rand_loc_rate: random shift rate (of patch) range
         :param scale_rate: patch size / bbox size
         """

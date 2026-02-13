@@ -53,17 +53,39 @@ from pytorch3d.renderer.cameras import look_at_view_transform
 from easydict import EasyDict
 
 class MaxProbExtractor(nn.Module):
+    """Extract maximum detection probabilities for adversarial loss computation.
+    استخراج حداکثر احتمالات تشخیص برای محاسبه هزینه متخاصم.
+    
+    Used with Faster R-CNN and similar detectors to extract confidence scores.
+    برای Faster R-CNN و تشخیص‌دهنده‌های مشابه برای استخراج امتیاز اطمینان استفاده می‌شود.
+    """
     def __init__(self, cls_id, num_cls):
+        """
+        :param cls_id: Target class ID / شناسه کلاس هدف
+        :param num_cls: Number of classes / تعداد کلاس‌ها
+        """
         super(MaxProbExtractor, self).__init__()
         self.cls_id = cls_id
         self.num_cls = num_cls
         self.loss_target = lambda obj, cls: obj
     def forward(self, output, gt, loss_type, iou_thresh):
+        """Extract detection probabilities based on IoU with ground truth.
+        استخراج احتمالات تشخیص بر اساس IoU با حقیقت زمینی.
+        
+        :param output: Detector output / خروجی تشخیص‌دهنده
+        :param gt: Ground truth boxes / جعبه‌های حقیقت زمینی
+        :param loss_type: Type of loss computation / نوع محاسبه هزینه
+        :param iou_thresh: IoU threshold / آستانه IoU
+        """
         det_loss = []
         max_probs = []
         num = 0
         for i, boxes in enumerate(output):
+            # Compute IoU between predictions and ground truth
+            # محاسبه IoU بین پیش‌بینی‌ها و حقیقت زمینی
             ious = torchvision.ops.box_iou(boxes['boxes'], gt[i].unsqueeze(0)).squeeze(1)
+            # Filter detections by IoU threshold and class
+            # فیلتر تشخیص‌ها بر اساس آستانه IoU و کلاس
             mask = ious.ge(iou_thresh)
             if True:
                 mask = mask.logical_and(boxes['labels'] == 1)
@@ -71,11 +93,13 @@ class MaxProbExtractor(nn.Module):
             scores = boxes['scores'][mask]
             if len(ious) > 0:
                 if loss_type == 'max_iou':
+                    # Use box with maximum IoU / استفاده از جعبه با حداکثر IoU
                     _, ids = torch.max(ious, dim=0)
                     det_loss.append(scores[ids])
                     max_probs.append(scores[ids])
                     num += 1
                 elif loss_type == 'max_conf':
+                    # Use maximum confidence score / استفاده از حداکثر امتیاز اطمینان
                     det_loss.append(scores.max())
                     max_probs.append(scores.max())
                     num += 1

@@ -4,23 +4,26 @@ from torch.optim.optimizer import Optimizer
 
 
 class BaseAttacker(Optimizer):
-    """An Attack Base Class"""
+    """An Attack Base Class
+    کلاس پایه حمله.
+    
+    This class implements the core adversarial attack logic:
+    این کلاس منطق اصلی حمله متخاصم را پیاده‌سازی می‌کند:
+    - Loss function computation / محاسبه تابع هزینه
+    - Gradient-based optimization / بهینه‌سازی مبتنی بر گرادیان
+    - Perturbation bounds enforcement / اعمال محدودیت‌های اغتشاش
+    """
 
     def __init__(self, loss_func, norm: str, cfg, device: torch.device, detector_attacker):
         """
+        Initialize base attacker with loss function and perturbation constraints.
+        مقداردهی اولیه مهاجم پایه با تابع هزینه و محدودیت‌های اغتشاش.
 
-        :param loss_func:
-        :param norm: str, [L0, L1, L2, L_infty]
-        :param cfg:
-        :param detector_attacker: this attacker should have attributes vlogger
-
-        Args:
-            loss_func ([torch.nn.Loss]): [a loss function to calculate the loss between the inputs and expeced outputs]
-            norm (str, optional): [the attack norm and the choices are [L0, L1, L2, L_infty]]. Defaults to 'L_infty'.
-            epsilons (float, optional): [the upper bound of perturbation]. Defaults to 0.05.
-            max_iters (int, optional): [the maximum iteration number]. Defaults to 10.
-            step_lr (float, optional): [the step size of attack]. Defaults to 0.01.
-            device ([type], optional): ['cpu' or 'cuda']. Defaults to None.
+        :param loss_func: a loss function to calculate the loss / تابع هزینه
+        :param norm: the attack norm [L0, L1, L2, L_infty] / نرم حمله
+        :param cfg: configuration object / شی پیکربندی
+        :param device: 'cpu' or 'cuda' / دستگاه پردازش
+        :param detector_attacker: this attacker should have attributes vlogger / مهاجم تشخیص‌دهنده
         """
         defaults = dict(lr=cfg.STEP_LR)
         params = [detector_attacker.patch_obj.patch]
@@ -31,6 +34,8 @@ class BaseAttacker(Optimizer):
         self.detector_attacker = detector_attacker
         self.device = device
         self.norm = norm
+        # Epsilon bounds for perturbation magnitude
+        # محدوده‌های اپسیلون برای بزرگی اغتشاش
         self.min_epsilon = 0.
         self.max_epsilon = cfg.EPSILON / 255.
         self.max_iters = cfg.MAX_EPOCH
@@ -50,12 +55,29 @@ class BaseAttacker(Optimizer):
                 vlogger.write_cv2(plotted, f'{detector.name}')
 
     def non_targeted_attack(self, ori_tensor_batch, detector):
+        """Execute non-targeted adversarial attack.
+        اجرای حمله متخاصم غیرهدفمند.
+        
+        This method:
+        این روش:
+        1. Applies adversarial patch to images / وصله متخاصم را به تصاویر اعمال می‌کند
+        2. Runs detection on adversarial images / تشخیص را روی تصاویر متخاصم اجرا می‌کند
+        3. Computes attack loss to minimize detection confidence / هزینه حمله را برای کمینه کردن اطمینان تشخیص محاسبه می‌کند
+        
+        :param ori_tensor_batch: Original image batch / دسته تصویر اصلی
+        :param detector: Object detection model / مدل تشخیص شیء
+        :return: loss, tv_loss, obj_loss / هزینه، هزینه TV، هزینه شیء
+        """
         losses = []
         for iter in range(self.iter_step):
             if iter > 0: ori_tensor_batch = ori_tensor_batch.clone()
+            # Apply the universal adversarial patch
+            # اعمال وصله متخاصم جهانی
             adv_tensor_batch = self.detector_attacker.uap_apply(ori_tensor_batch)
 
             adv_tensor_batch = adv_tensor_batch.to(detector.device)
+            # Run detection on adversarial images
+            # اجرای تشخیص روی تصاویر متخاصم
             # Be explicit about keys to avoid dict ordering issues across detectors
             det_out = detector(adv_tensor_batch)
             bboxes = det_out.get('bbox_array')

@@ -12,25 +12,41 @@ from utils.det_utils import inter_nms
 
 
 class UniversalAttacker(object):
-    """An attacker agent to coordinate the detect & base attack methods for universal attacks."""
+    """An attacker agent to coordinate the detect & base attack methods for universal attacks.
+    عامل مهاجم برای هماهنگ‌سازی تشخیص و روش‌های حمله پایه برای حملات جهانی.
+    
+    This class manages:
+    این کلاس مدیریت می‌کند:
+    1. Universal adversarial patch / وصله متخاصم جهانی
+    2. Patch application / اعمال وصله
+    3. Multi-detector coordination / هماهنگی چند تشخیص‌دهنده
+    """
 
     def __init__(self, cfg, device: torch.device):
         """
+        Initialize the universal attacker.
+        مقداردهی اولیه مهاجم جهانی.
 
-        :param cfg: Parsed proj config object.
-        :param device: torch.device, cpu or cuda
+        :param cfg: Parsed proj config object / شی پیکربندی تجزیه شده پروژه
+        :param device: torch.device, cpu or cuda / دستگاه پردازش
         """
         self.cfg = cfg
         self.device = device
-        self.max_boxes = 15
+        self.max_boxes = 15  # Maximum number of detection boxes to process / حداکثر تعداد جعبه‌های تشخیص قابل پردازش
         self.patch_boxes = []
 
         self.class_names = cfg.all_class_names  # class names reference: labels of all the classes
         self.attack_list = cfg.attack_list  # int list: classes index to be attacked, [40, 41, 42, ...]
+        # Patch manager to handle the adversarial patch
+        # مدیر وصله برای مدیریت وصله متخاصم
         self.patch_obj = PatchManager(cfg.ATTACKER.PATCH, device)
         self.vlogger = None
 
+        # Patch applier with random transformations for robustness
+        # اعمالکننده وصله با تبدیلات تصادفی برای استحکام
         self.patch_applier = PatchRandomApplier(device, cfg_patch=cfg.ATTACKER.PATCH)
+        # Initialize detection models to attack
+        # مقداردهی اولیه مدل‌های تشخیص برای حمله
         self.detectors = init_detectors(cfg_det=cfg.DETECTOR)
 
         # Simple visualization counter to avoid overwrites
@@ -42,14 +58,20 @@ class UniversalAttacker(object):
     @property
     def universal_patch(self):
         """ This is for convenient calls.
+        این برای فراخوانی‌های آسان است.
 
-        :return: the adversarial patch tensor.
+        :return: the adversarial patch tensor / تنسور وصله متخاصم
         """
         return self.patch_obj.patch
 
     def init_attaker(self):
+        """Initialize the attack method with loss function.
+        مقداردهی اولیه روش حمله با تابع هزینه.
+        """
         cfg = self.cfg.ATTACKER
         loss_fn = loss_dict[cfg.LOSS_FUNC]
+        # Get attack method from dictionary (PGD, BIM, MIM, etc.)
+        # دریافت روش حمله از دیکشنری (PGD، BIM، MIM و غیره)
         self.attacker = get_attack_method(cfg.METHOD)(
             loss_func=loss_fn, norm='L_infty', device=self.device, cfg=cfg, detector_attacker=self)
 
@@ -111,15 +133,18 @@ class UniversalAttacker(object):
         return np.array(target_nums)
 
     def uap_apply(self, img_tensor: torch.Tensor, adv_patch: torch.Tensor=None):
-        """To attach the uap(universal adversarial patch) onto the image samples.
-        :param img_tensor: image batch tensor.
-        :param adv_patch: adversarial patch tensor.
-        :return:
+        """Attach the UAP (Universal Adversarial Patch) onto image samples.
+        الصاق وصله متخاصم جهانی (UAP) به نمونه‌های تصویر.
+        
+        :param img_tensor: image batch tensor / تنسور دسته تصویر
+        :param adv_patch: adversarial patch tensor / تنسور وصله متخاصم
+        :return: image tensor with applied adversarial patch / تنسور تصویر با وصله متخاصم اعمال شده
         """
         if adv_patch is None: adv_patch = self.universal_patch
         img_tensor = self.patch_applier(img_tensor, adv_patch, self.all_preds)
 
         # Clamp to valid range expected by detectors (Ultralytics expects [0,1])
+        # محدود کردن به محدوده معتبر مورد انتظار تشخیص‌دهنده‌ها
         img_tensor = img_tensor.float().clamp(0.0, 1.0)
 
         # 1st inference: get bbox; 2rd inference: get detections of the adversarial patch

@@ -5,42 +5,89 @@ from joblib import Parallel, delayed
 from scipy.spatial.distance import cdist
 
 class PrecomputedTPSDeformer:
+    """Thin Plate Spline (TPS) Deformer for Non-Rigid Shape Manipulation (NRSM).
+    تغییرشکل‌دهنده Thin Plate Spline (TPS) برای دستکاری شکل غیرصلب (NRSM).
+    
+    This class implements TPS-based mesh deformation:
+    این کلاس تغییرشکل مش مبتنی بر TPS را پیاده‌سازی می‌کند:
+    1. Select control points based on curvature / انتخاب نقاط کنترل بر اساس انحنا
+    2. Precompute TPS transformation matrices / پیش‌محاسبه ماتریس‌های تبدیل TPS
+    3. Apply smooth deformations efficiently / اعمال تغییرشکل‌های نرم به طور کارآ
+    """
     def __init__(self, vertices_np, triangles_np):
+        """Initialize TPS deformer with mesh vertices and faces.
+        مقداردهی اولیه تغییرشکل‌دهنده TPS با رئوس و وجوه مش.
+        
+        :param vertices_np: Mesh vertices array / آرایه رئوس مش
+        :param triangles_np: Mesh triangles/faces array / آرایه مثلثات/وجوه مش
+        """
         self.vertices = vertices_np
         self.triangles = triangles_np
+        # Create Open3D mesh for normal computation
+        # ایجاد مش Open3D برای محاسبه نرمال
         self.mesh = o3d.geometry.TriangleMesh(
             o3d.utility.Vector3dVector(vertices_np),
             o3d.utility.Vector3iVector(triangles_np)
         )
         self.mesh.compute_vertex_normals()
+        # Compute curvature for intelligent control point selection
+        # محاسبه انحنا برای انتخاب هوشمند نقاط کنترل
         self.curvatures = self._compute_curvature()
         self.control_points_coords = None
         self.inverse_kernel = None
         self.target_repr_matrix = None
 
     def _compute_curvature(self):
+        """Compute discrete curvature at each vertex using face normals.
+        محاسبه انحنای گسسته در هر رأس با استفاده از نرمال‌های وجه.
+        
+        Curvature estimation based on variation of face normals around vertex.
+        تخمین انحنا بر اساس تغییرات نرمال‌های وجه دور رأس.
+        
+        :return: Array of curvature values per vertex / آرایه مقادیر انحنا برای هر رأس
+        """
         vertices = self.vertices
         triangles = self.triangles
         def calculate_curvature_for_vertex(i):
+            # Find all faces adjacent to this vertex
+            # یافتن تمام وجوه مجاور با این رأس
             adjacent_face_indices = np.where(np.any(triangles == i, axis=1))[0]
             if len(adjacent_face_indices) == 0: return 0.0
             adjacent_faces = triangles[adjacent_face_indices]
+            # Compute face normals
+            # محاسبه نرمال‌های وجه
             p1, p2, p3 = vertices[adjacent_faces[:, 0]], vertices[adjacent_faces[:, 1]], vertices[adjacent_faces[:, 2]]
             face_normals = np.cross(p2 - p1, p3 - p1)
             norm = np.linalg.norm(face_normals, axis=1, keepdims=True)
             face_normals /= (norm + 1e-8)
             mean_normal = np.mean(face_normals, axis=0)
             mean_normal /= (np.linalg.norm(mean_normal) + 1e-8)
+            # Curvature is variance of normals
+            # انحنا برابر با واریانس نرمال‌ها است
             return np.mean(np.linalg.norm(face_normals - mean_normal, axis=1))
+        # Parallel computation for efficiency
+        # محاسبه موازی برای کارایی
         curvatures = Parallel(n_jobs=-1)(delayed(calculate_curvature_for_vertex)(i) for i in range(len(vertices)))
         return np.nan_to_num(np.array(curvatures), nan=0.0)
 
     def select_and_prepare(self, num_points=200):
+        """Select control points and precompute TPS matrices for efficient deformation.
+        انتخاب نقاط کنترل و پیش‌محاسبه ماتریس‌های TPS برای تغییرشکل کارآ.
+        
+        Uses curvature-based sampling + k-means clustering for optimal control point placement.
+        از نمونه‌برداری مبتنی بر انحنا + خوشه‌بندی k-means برای قرارگیری بهینه نقاط کنترل استفاده می‌کند.
+        
+        :param num_points: Number of control points / تعداد نقاط کنترل
+        """
         print(f"🎯 Selecting {num_points} control points based on curvature...")
+        # Weight sampling by curvature (higher curvature = more likely to be selected)
+        # وزن‌دار کردن نمونه‌برداری بر اساس انحنا (انحنای بیشتر = احتمال انتخاب بیشتر)
         sample_weights = self.curvatures / (self.curvatures.sum() + 1e-8)
         num_samples = min(len(self.vertices), num_points * 10)
         candidate_indices = np.random.choice(len(self.vertices), size=num_samples, replace=False, p=sample_weights)
         candidate_points = self.vertices[candidate_indices]
+        # K-means clustering to get well-distributed control points
+        # خوشه‌بندی K-means برای دریافت نقاط کنترل خوب توزیع شده
         kmeans = MiniBatchKMeans(n_clusters=num_points, n_init='auto', batch_size=256)
         kmeans.fit(candidate_points)
         control_indices = [np.argmin(np.linalg.norm(self.vertices - center, axis=1)) for center in kmeans.cluster_centers_]
