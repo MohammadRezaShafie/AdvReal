@@ -1,15 +1,15 @@
 # Add New Target Detector: Integration Report
 
-This report explains how to add a new object detection model to AdvReal, including the API wrapper, configuration, and training-path hooks.
+This report explains how to add a new object detection model to AdvReal, including the API wrapper, configuration, and training-path hooks. **Important note: Since the detector is used like a black box there is no need to know about its parameters, architecture, or etc. It is just needed to set it's input size and be aware of the output format.**
 
 ## 1) Where detectors are wired in
 
-- Detector registry and initialization: detlib/utils.py
-- Base detector interface (required methods): detlib/base.py
-- Attack loop consumes detector outputs: attack/methods/base.py
-- Multi-detector orchestration: attack/attacker.py
+- Detector registry and initialization: detlib/utils.py (Needed to initialize new model here)
+- Base detector interface (required methods): detlib/base.py (No need to change)
+- Attack loop consumes detector outputs: attack/methods/base.py (No need to change)
+- Multi-detector orchestration: attack/attacker.py (No need to change)
 - 3D/patch training path uses model + extractor: train.py and load_data.py
-- Output conversion helpers for some models: utils_camou.py
+- Output conversion helpers for some models: utils_camou.py (Needed to be changed for adding models other that YOLO)
 
 ## 2) Detector output contract (required)
 
