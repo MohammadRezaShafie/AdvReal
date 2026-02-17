@@ -1,117 +1,662 @@
-# Change Target Object for Adversarial Patch
+# 🎯 Changing Target Object Class for Adversarial Attacks
 
-This report explains how to change the target class (for example, from person to car) when generating adversarial patches in AdvReal.
+> **Complete Guide: From Person Detection to Any Object Class**
 
-## 1) The single source of truth: ATTACK_CLASS
+This guide explains how to modify AdvReal to attack different object classes (e.g., attacking cars instead of people). Whether you're targeting vehicles, animals, or custom objects, this guide covers all necessary configuration changes.
 
-The target class is controlled by ATTACK_CLASS in your YAML config. It is parsed in ConfigParser and used by the attacker and patch placement logic.
+---
 
-Where it is read:
-- Config parsing and target class storage: utils/parser.py
-- Target class filtering for patch placement: attack/attacker.py
+## 📋 Quick Overview
 
-## 2) Find the class ID for "car"
+**What you need to change:**
+1. ✅ Update `ATTACK_CLASS` in configuration file
+2. ✅ Verify class ID in names file
+3. ⚠️ Fix hardcoded extractors (if using train.py)
+4. 🎨 Update 3D assets (for realistic rendering)
 
-The class names file is defined in the config, for example:
+---
 
-- COCO 80 names: configs/namefiles/coco80.names
+## 🎛️ Configuration: The Single Source of Truth
 
-To target car, you need the numeric index of "car" in that names file. In COCO80, "car" is usually index 2, but verify in the file to be safe.
+### `ATTACK_CLASS` Parameter
 
-## 3) Step-by-step (beginner friendly)
+The target class is controlled by a **single parameter** in your YAML configuration:
 
-### Step A: Open your config file
-
-Pick the config you use for training (examples):
-- configs/baseline/v5.yaml
-- configs/baseline/v11.yaml
-
-### Step B: Set ATTACK_CLASS to the car ID
-
-Find this block:
-
-```
+```yaml
 ATTACKER:
-  ATTACK_CLASS: '0'
+  ATTACK_CLASS: '0'  # 👈 This controls which object to attack
 ```
 
-Change it to the car ID, for example:
+**Where it's used:**
+- 📝 **Parsing:** [`utils/parser.py`](../utils/parser.py) → `ConfigParser` reads and stores it
+- 🎯 **Filtering:** [`attack/attacker.py`](../attack/attacker.py) → Filters detections by class
+- 🔍 **Loss computation:** Probability extractors use it to select target boxes
 
+---
+
+## 🔍 Step-by-Step: Find Your Target Class ID
+
+### Method 1: Check the Names File
+
+**Default COCO 80 classes:** [`configs/namefiles/coco80.names`](../configs/namefiles/coco80.names)
+
+```bash
+# View class names with line numbers
+cat -n configs/namefiles/coco80.names
 ```
+
+**Common COCO class IDs:**
+
+| Class | ID | Class | ID | Class | ID |
+|-------|----|-custom|-------|-----|-----|
+| person | 0 | bicycle | 1 | car | 2 |
+| motorcycle | 3 | airplane | 4 | bus | 5 |
+| train | 6 | truck | 7 | boat | 8 |
+| cat | 15 | dog | 16 | horse | 17 |
+| elephant | 20 | bear | 21 | zebra | 22 |
+
+### Method 2: Programmatic Lookup
+
+```python
+from utils.parser import load_class_names
+
+# Load class names
+classes = load_class_names('configs/namefiles/coco80.names')
+
+# Find class ID
+target_class = 'car'
+class_id = classes.index(target_class)
+print(f"✅ '{target_class}' has ID: {class_id}")
+
+# Output: ✅ 'car' has ID: 2
+```
+
+---
+
+## ⚙️ Configuration Update Tutorial
+
+### 🎯 Example: Attack Cars Instead of People
+
+**Before (Person attack):**
+```yaml
 ATTACKER:
-  ATTACK_CLASS: '2'
+  ATTACK_CLASS: '0'  # Person
 ```
 
-### Step C: Confirm the class names file
-
-Check that DATA.CLASS_NAME_FILE in your config points to the names file you expect:
-
+**After (Car attack):**
+```yaml
+ATTACKER:
+  ATTACK_CLASS: '2'  # Car
 ```
+
+---
+
+### 📝 Complete Configuration Example
+
+**File:** `configs/baseline/v5_car.yaml`
+
+```yaml
+# Dataset Configuration
 DATA:
-  CLASS_NAME_FILE: 'configs/namefiles/coco80.names'
+  CLASS_NAME_FILE: 'configs/namefiles/coco80.names'  # 👈 Verify this path
+  AUGMENT: 0
+  
+  TRAIN:
+    IMG_DIR: 'data/car_images/train'  # 👈 Use car-specific dataset
+    LAB_DIR: 'data/car_images/labels'
+
+# Detector Settings
+DETECTOR:
+  NAME: ["YOLOV5"]
+  INPUT_SIZE: [416, 416]
+  BATCH_SIZE: 8
+  CONF_THRESH: 0.5
+  IOU_THRESH: 0.45
+
+# Attack Configuration  
+ATTACKER:
+  METHOD: "optim"
+  EPSILON: 255
+  MAX_EPOCH: 800
+  STEP_LR: 0.03
+  ATTACK_CLASS: '2'           # 👈 Car class ID
+  LOSS_FUNC: "obj-tv"
+  tv_eta: 2.5
+  
+  PATCH:
+    WIDTH: 300
+    HEIGHT: 300
+    SCALE: 0.15
+    INIT: "gray"
+    TRANSFORM: ['jitter', 'rotate', 'median_pool']
 ```
 
-If you use a custom dataset, update this path to your own class list file.
+---
 
-### Step D: Run training
+---
 
-Use your normal command, for example:
+## ⚠️ Critical Issue: Hardcoded Extractors
 
-```
-python train.py --nepoch 800 --save_path 'results/yolov5_car' --arch "yolov5" --cfg configs/baseline/v5.yaml --seed_type fixed --loss_type max_iou
-```
+### The Problem
 
-## 4) Important note about train.py vs multi-detector path
+Some probability extractors in [`load_data.py`](../load_data.py) **hardcode** `attack_cls = 0`, ignoring the configuration:
 
-There are two paths in this repo:
-
-1) Multi-detector attacker path
-   - Uses UniversalAttacker and init_detectors.
-   - ATTACK_CLASS is respected for patch placement and filtering.
-
-2) train.py path (3D/patch training)
-   - Uses model-specific probability extractors in load_data.py.
-   - Some extractors still hardcode attack_cls = 0 (person).
-
-This means changing ATTACK_CLASS in the config may not fully affect the training path unless the extractor reads the config.
-
-### What to change if you use train.py
-
-- YOLOv5MaxProbExtractor in load_data.py currently sets attack_cls = 0.
-  Update it to read from cfg (same pattern used in YOLOv11MaxProbExtractor).
-
-Suggested pattern:
-
-```
-attack_cls = int(getattr(self.cfg, 'ATTACKER', EasyDict(ATTACK_CLASS='0')).ATTACK_CLASS)
-mask = mask & (cls_idx == attack_cls)
+```python
+# ❌ WRONG: Hardcoded person class
+class YOLOv2MaxProbExtractor(nn.Module):
+    def forward(self, YOLOoutputs, gt, loss_type, iou_thresh):
+        # ...
+        attack_cls = 0  # 👈 Always attacks person!
+        mask = mask & (cls_idx == attack_cls)
 ```
 
-Also ensure the extractor instance has cfg assigned after you create it.
+**Impact:** Even if you change `ATTACK_CLASS` in config, training still targets person class!
 
-## 5) Quick checklist
+---
 
-- Confirm the class index in configs/namefiles/coco80.names
-- Update ATTACK_CLASS in the config
-- If using train.py, ensure the extractor uses cfg (not hardcoded 0)
-- Verify that bbox_array output uses the class ID you expect
+### The Solution: Fix Extractors
 
-## 6) Example: person to car (YOLOv11)
+#### ✅ Correct Pattern (from YOLOv11)
 
-1) Open configs/baseline/v11.yaml
-2) Change ATTACK_CLASS from '0' to '2' (if car is index 2 in your class list)
-3) Run training with --arch "yolov11"
+```python
+class YOLOv11MaxProbExtractor(nn.Module):
+    def __init__(self, cls_id, num_cls, model, figsize):
+        super().__init__()
+        self.cls_id = cls_id
+        self.num_cls = num_cls
+        self.figsize = figsize
+        self.model = model
+        self.cfg = None  # 👈 Will be set externally
+    
+    def forward(self, YOLOoutputs, gt, loss_type, iou_thresh):
+        # ...
+        
+        # ✅ CORRECT: Read from config
+        from easydict import EasyDict
+        attack_cls = int(getattr(
+            self.cfg, 
+            'ATTACKER', 
+            EasyDict(ATTACK_CLASS='0')
+        ).ATTACK_CLASS)
+        
+        mask = mask & (cls_idx == attack_cls)
+        # ...
+```
 
-If your results still target person, update the extractor logic as described above.
+#### 🔧 Files That Need Fixing
 
-## 7) Data and 3D asset requirements for a new target object
+| File | Class | Status |
+|------|-------|--------|
+| [`load_data.py`](../load_data.py#L182) | `YOLOv2MaxProbExtractor` | ❌ **Needs fix** |
+| [`load_data.py`](../load_data.py#L347) | `YOLOv5MaxProbExtractor` | ❌ **Needs fix** |
+| [`load_data.py`](../load_data.py#L401) | `YOLOv11MaxProbExtractor` | ✅ Already correct |
+| [`load_data.py`](../load_data.py#L56) | `MaxProbExtractor` (Faster R-CNN) | ⚠️ Uses `cls_id` parameter |
 
-If you change the target class (for example, from person to car), the training data and 3D assets must also match the new object:
+---
 
-- Dataset: use images and labels for the new class (for example, car images instead of pedestrian).
-- Class names: update the names file to include the correct class list and verify the car index.
-- 3D model: provide a suitable 3D mesh for the new object (car model instead of human body).
-- Rendering: update the renderer inputs (mesh paths, UVs, textures) so the new object is rendered correctly.
-- Perspective and scale: verify camera distance, object scale, and placement so the patch is realistic on the new target.
+### 🛠️ How to Fix YOLOv2/YOLOv5 Extractors
 
-If you keep person-specific data and meshes, the patch will optimize for the wrong object even if ATTACK_CLASS is changed.
+**Step 1:** Add `self.cfg` attribute in `__init__`:
+
+```python
+class YOLOv2MaxProbExtractor(nn.Module):
+    def __init__(self, cls_id, num_cls, model, figsize):
+        super().__init__()
+        self.cls_id = cls_id
+        self.num_cls = num_cls
+        self.figsize = figsize
+        self.model = model
+        self.cfg = None  # 👈 Add this line
+```
+
+**Step 2:** Read attack class from config in `forward()`:
+
+```python
+def forward(self, YOLOoutputs, gt, loss_type, iou_thresh):
+    # ... existing code ...
+    
+    # Replace: attack_cls = 0
+    # With:
+    from easydict import EasyDict
+    attack_cls = int(getattr(
+        self.cfg, 
+        'ATTACKER', 
+        EasyDict(ATTACK_CLASS='0')
+    ).ATTACK_CLASS)
+    
+    mask = ious.ge(iou_thresh) & (boxes[..., 6] == attack_cls)
+    # ... rest of code ...
+```
+
+**Step 3:** Set config after creating extractor in [`train.py`](../train.py):
+
+```python
+# In PatchTrainer.__init__()
+if args.arch == "yolov2":
+    self.prob_extractor = YOLOv2MaxProbExtractor(
+        cls_id=0, num_cls=80, model=self.model, figsize=self.img_size
+    )
+    self.prob_extractor.cfg = cfg  # 👈 Add this line
+```
+
+---
+
+## 🔀 Two Training Paths: Understanding the Difference
+
+AdvReal has **two distinct attack pipelines:**
+
+### Path 1: Multi-Detector Attack Framework
+
+**File:** [`attack/attacker.py`](../attack/attacker.py) → `UniversalAttacker`
+
+```python
+# ✅ This path RESPECTS ATTACK_CLASS automatically
+detector_attacker = UniversalAttacker(cfg, device)
+detector_attacker.attack(img_batch)  # Uses cfg.attack_cls internally
+```
+
+**Characteristics:**
+- ✅ Reads `ATTACK_CLASS` from config correctly
+- ✅ Works with multiple detectors
+- ✅ No extractor modification needed
+- ✅ Used for adversarial evaluation
+
+**Use case:** Evaluating patch effectiveness across multiple models
+
+---
+
+### Path 2: 3D Patch Training Pipeline
+
+**File:** [`train.py`](../train.py) → `PatchTrainer`
+
+```python
+# ⚠️ This path uses model-specific extractors
+trainer = PatchTrainer(args)
+trainer.train()  # Uses prob_extractor internally
+```
+
+**Characteristics:**
+- ⚠️ Uses probability extractors from `load_data.py`
+- ⚠️ Some extractors hardcode `attack_cls = 0`
+- ⚠️ Requires manual fixes (see above)
+- ✨ Enables 3D rendering and NRSM
+
+**Use case:** Training patches with realistic 3D rendering
+
+---
+
+## ✅ Complete Checklist
+
+Use this checklist when changing target class:
+
+### 📋 Configuration Changes
+
+- [ ] **Find class ID** in `configs/namefiles/coco80.names`
+- [ ] **Update ATTACK_CLASS** in your config YAML (e.g., '0' → '2')
+- [ ] **Verify class names file** path in `DATA.CLASS_NAME_FILE`
+- [ ] **Update dataset path** to match new object class
+
+### 🔧 Code Fixes (for train.py path)
+
+- [ ] **Check extractor** for your architecture (YOLOv2/v5/v11)
+- [ ] **Add `self.cfg`** attribute if missing
+- [ ] **Replace hardcoded 0** with config lookup
+- [ ] **Set extractor.cfg** in `train.py`
+
+### 🎨 Asset Updates (for 3D rendering)
+
+- [ ] **3D mesh files** matching new object (e.g., car.obj)
+- [ ] **Texture coordinates** (UV maps)
+- [ ] **Training images** containing target class
+- [ ] **Camera parameters** (distance, angle) appropriate for object
+
+### 🧪 Validation
+
+- [ ] **Run quick test** with 10 epochs
+- [ ] **Inspect bbox_array** output for correct class IDs
+- [ ] **Monitor loss values** (should decrease)
+- [ ] **Visual check** on rendered images
+
+---
+
+## 📚 Example: Complete Car Attack Setup
+
+### 🎯 Goal: Attack YOLOv5 on Cars
+
+**Step 1: Configuration**
+
+```bash
+# Create new config
+cp configs/baseline/v5.yaml configs/baseline/v5_car.yaml
+```
+
+```yaml
+# Edit v5_car.yaml
+ATTACKER:
+  ATTACK_CLASS: '2'  # Car class
+```
+
+**Step 2: Fix Extractor (if needed)**
+
+```python
+# In load_data.py → YOLOv5MaxProbExtractor
+def __init__(self, cls_id, num_cls, model, figsize):
+    # ... existing code ...
+    self.cfg = None  # Add this
+
+def forward(self, YOLOoutputs, gt, loss_type, iou_thresh):
+    # ... existing code ...
+    
+    # Replace: attack_cls = 0
+    attack_cls = int(getattr(
+        self.cfg, 'ATTACKER', 
+        EasyDict(ATTACK_CLASS='0')
+    ).ATTACK_CLASS)
+```
+
+**Step 3: Train**
+
+```bash
+python train.py \
+    --nepoch 800 \
+    --save_path results/yolov5_car_patch \
+    --arch yolov5 \
+    --cfg configs/baseline/v5_car.yaml \
+    --seed_type fixed \
+    --loss_type max_iou \
+    --lr 0.03
+```
+
+**Step 4: Verify**
+
+```python
+# Quick verification script
+import torch
+from utils.parser import ConfigParser
+
+cfg = ConfigParser("configs/baseline/v5_car.yaml")
+print(f"✅ Attacking class: {cfg.attack_cls}")  # Should be 2
+print(f"✅ Class name: {cfg.all_class_names[cfg.attack_cls]}")  # Should be 'car'
+```
+
+---
+
+---
+
+## 🎨 Advanced: 3D Assets for New Target Objects
+
+When attacking non-person objects with 3D rendering, you need appropriate assets.
+
+### 📦 Required Assets
+
+| Asset Type | Purpose | Example (Person) | Example (Car) |
+|------------|---------|------------------|---------------|
+| **3D Mesh** | Object geometry | `man.obj` | `sedan.obj` |
+| **Texture UV** | Patch placement | T-shirt UV map | Car hood UV map |
+| **Training Data** | Ground truth | INRIA pedestrians | COCO cars |
+| **Background Images** | Scene compositing | Street scenes | Roads/parking lots |
+
+---
+
+### 🛠️ Mesh Preparation Workflow
+
+#### 1. Acquire 3D Model
+
+**Sources:**
+- 🆓 [Sketchfab](https://sketchfab.com/) (filter: downloadable, free)
+- 🆓 [TurboSquid Free Models](https://www.turbosquid.com/Search/3D-Models/free)
+- 🎨 Create custom with Blender
+
+**Requirements:**
+- ✅ Closed, watertight mesh
+- ✅ Reasonable polygon count (5K-50K triangles)
+- ✅ Clean UV unwrapping
+
+#### 2. UV Map for Patch Placement
+
+**Using Blender:**
+
+```python
+# 1. Import model: File → Import → Wavefront (.obj)
+# 2. Select object, switch to Edit Mode (Tab)
+# 3. Select faces where patch should appear (e.g., car hood)
+# 4. U → Unwrap → Smart UV Project
+# 5. UV Editor → Export UV Layout
+# 6. File → Export → Wavefront (.obj)
+```
+
+**Export settings:**
+- ✅ Include UVs
+- ✅ Triangulate faces
+- ✅ Write normals
+- ✅ Y-axis up
+
+#### 3. Integrate into AdvReal
+
+**File locations:**
+
+```
+data/Archive/
+├── car_model/
+│   ├── car.obj           # Main geometry
+│   ├── car.mtl           # Material properties
+│   └── textures/
+│       └── default.png   # Base texture
+```
+
+**Update renderer in [`train.py`](../train.py):**
+
+```python
+class PatchTrainer(object):
+    def __init__(self, args):
+        # ... existing code ...
+        
+        # Load 3D meshes for target object
+        if args.target_object == "car":
+            mesh_car = "data/Archive/car_model/car.obj"
+            self.mesh_obj = load_objs_as_meshes(
+                [mesh_car], 
+                device=self.device
+            )
+```
+
+---
+
+### 🎯 Camera & Rendering Parameters
+
+Different objects require different camera setups:
+
+| Object | Distance | Elevation | FOV | Scale |
+|--------|----------|-----------|-----|-------|
+| **Person** | 5-10m | Eye level (±10°) | 45° | 1.0 |
+| **Car** | 10-20m | Slightly above (+20°) | 50° | 1.5 |
+| **Animal** | 3-8m | Ground level (0°) | 40° | 0.8 |
+| **Drone** | 15-30m | Below (-30°) | 60° | 0.5 |
+
+**Update in [`render.py`](../render.py):**
+
+```python
+# Camera positioning for car rendering
+R, T = look_at_view_transform(
+    dist=15.0,       # Distance from object
+    elev=20.0,       # Elevation angle (degrees)
+    azim=np.random.uniform(-30, 30)  # Random azimuth
+)
+
+cameras = FoVPerspectiveCameras(
+    device=device,
+    R=R, T=T,
+    fov=50.0        # Field of view
+)
+```
+
+---
+
+### 📊 Dataset Preparation
+
+**Required structure:**
+
+```
+data/
+├── car_images/
+│   ├── train/
+│   │   ├── 000001.jpg
+│   │   ├── 000002.jpg
+│   │   └── ...
+│   └── labels/
+│       ├── 000001.txt  # YOLO format: class x y w h
+│       ├── 000002.txt
+│       └── ...
+└── background_car/
+    └── highway_scenes/
+        ├── bg_001.jpg
+        ├── bg_002.jpg
+        └── ...
+```
+
+**Label format (YOLO):**
+
+```
+# 000001.txt (normalized coordinates)
+2 0.456 0.678 0.234 0.187  # class_id x_center y_center width height
+```
+
+---
+
+## 🧪 Testing & Validation
+
+### Quick Sanity Check
+
+```python
+# test_target_class.py
+import torch
+from utils.parser import ConfigParser
+from attack.attacker import UniversalAttacker
+
+# Load config
+cfg = ConfigParser("configs/baseline/v5_car.yaml")
+
+print("=" * 50)
+print("🎯 Target Class Configuration")
+print("=" * 50)
+print(f"ATTACK_CLASS (config): {cfg.ATTACKER.ATTACK_CLASS}")
+print(f"attack_cls (parsed):   {cfg.attack_cls}")
+print(f"Class name:            {cfg.all_class_names[cfg.attack_cls]}")
+print(f"Attack list:           {cfg.attack_list}")
+print("=" * 50)
+
+# Initialize attacker
+attacker = UniversalAttacker(cfg, torch.device('cuda'))
+print(f"\n✅ Attacker initialized successfully!")
+print(f"Target class filter:   {attacker.cfg.attack_cls}")
+```
+
+**Expected output:**
+
+```
+==================================================
+🎯 Target Class Configuration
+==================================================
+ATTACK_CLASS (config): 2
+attack_cls (parsed):   2
+Class name:            car
+Attack list:           [2]
+==================================================
+
+✅ Attacker initialized successfully!
+Target class filter:   2
+```
+
+---
+
+### Visual Validation
+
+```python
+# visualize_detections.py
+import cv2
+import torch
+from detlib.utils import init_detector
+from utils.parser import ConfigParser
+from utils.det_utils import plot_boxes_cv2
+
+cfg = ConfigParser("configs/baseline/v5_car.yaml")
+detector = init_detector("yolov5", cfg.DETECTOR)
+
+# Load test image
+img = cv2.imread("data/test_images/car_sample.jpg")
+img_tensor = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).float() / 255.0
+img_tensor = img_tensor.cuda()
+
+# Run detection
+output = detector(img_tensor)
+boxes = output['bbox_array'][0]
+
+# Filter by target class
+target_class_id = cfg.attack_cls
+target_boxes = boxes[boxes[:, 5] == target_class_id]
+
+print(f"🔍 Found {len(target_boxes)} {cfg.all_class_names[target_class_id]}(s)")
+
+# Visualize
+result = plot_boxes_cv2(img, target_boxes.cpu(), cfg.all_class_names)
+cv2.imwrite("detection_result.jpg", result)
+print("✅ Saved visualization to detection_result.jpg")
+```
+
+---
+
+## 🚨 Troubleshooting
+
+| Problem | Possible Cause | Solution |
+|---------|----------------|----------|
+| **Loss not decreasing** | Wrong class ID | Verify class index in names file |
+| **No detections** | Dataset mismatch | Ensure images contain target class |
+| **Still attacks person** | Hardcoded extractor | Fix `load_data.py` as described above |
+| **Mesh rendering fails** | Invalid OBJ file | Check mesh normals and UV maps |
+| **Memory error** | 3D mesh too large | Decimate mesh or reduce batch size |
+| **Patch not visible** | Wrong UV coordinates | Re-unwrap mesh in Blender |
+
+---
+
+## 📚 Additional Resources
+
+### 🔗 External Tools
+
+- **3D Modeling:** [Blender](https://www.blender.org/) (free, open-source)
+- **Mesh Repair:** [MeshLab](https://www.meshlab.net/)
+- **UV Editing:** [RizomUV](https://www.rizom-lab.com/) (has free version)
+- **Dataset Annotation:** [CVAT](https://www.cvat.ai/), [LabelImg](https://github.com/heartexlabs/labelImg)
+
+### 📖 Documentation
+
+- [COCO Dataset Classes](https://cocodataset.org/#explore)
+- [PyTorch3D Tutorials](https://pytorch3d.org/tutorials/)
+- [YOLO Label Format](https://docs.ultralytics.com/datasets/detect/)
+
+---
+
+## 📝 Summary
+
+**Minimum steps to change target class:**
+
+1. ✅ **Find class ID** in `configs/namefiles/coco80.names`
+2. ✅ **Update config:** `ATTACK_CLASS: '2'` (for car)
+3. ✅ **Fix extractors** (if using train.py with YOLOv2/v5)
+4. ✅ **Test with validation script**
+
+**For complete 3D pipeline:**
+
+5. ✅ **Prepare 3D mesh** with proper UV mapping
+6. ✅ **Update dataset** with target class images
+7. ✅ **Adjust camera** parameters for object scale
+8. ✅ **Validate rendering** visually
+
+---
+
+**🎉 You're ready to attack any object class!**
+
+**Still having issues?** Check:
+- ✅ Extractor is reading from `self.cfg` (not hardcoded)
+- ✅ Config file has correct `ATTACK_CLASS` value
+- ✅ Dataset contains target class annotations
+- ✅ 3D mesh has valid UV coordinates (for rendering path)
