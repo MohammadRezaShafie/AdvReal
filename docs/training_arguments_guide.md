@@ -897,5 +897,3 @@ python train.py \
 - [افزودن تشخیص‌دهنده جدید](add_new_detector_report.md) برای سفارشی‌سازی معماری
 
 ---
-
-**🎯 Happy Adversarial Patch Training! / آموزش موفق وصله مخالف!**

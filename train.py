@@ -196,7 +196,7 @@ class PatchTrainer(object):
         # Load background images for compositing 3D rendered objects
         # بارگذاری تصاویر پس‌زمینه برای ترکیب اشیاء رندر شده سه‌بعدی
         self.background_loader = get_nuscenes_loader(
-            img_dir='data/background_trans/background_train_resize',  # 根据您的目录结构修改
+            img_dir='data/background_trans/background_train_resize',  # Modify according to your directory structure
             batch_size=args.batch_size,
             shuffle=True,
             num_workers=args.num_workers,

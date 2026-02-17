@@ -489,9 +489,9 @@ def get_region_boxes_general(output, model, conf_thresh, name=None, img_size=416
         bbox_array = output['bbox_array']
         all_boxes = []
         for boxes in bbox_array:
-            # 筛选conf > conf_thresh
+            # Filter boxes by confidence threshold
             boxes = boxes[boxes[:,4] > conf_thresh]
-            # 转换到[x_c, y_c, w, h, obj_conf, cls_conf, cls_idx]
+            # Convert to [x_c, y_c, w, h, obj_conf, cls_conf, cls_idx]
             if boxes.shape[0] > 0:
                 x_c = (boxes[:,0] + boxes[:,2]) / 2.0
                 y_c = (boxes[:,1] + boxes[:,3]) / 2.0
@@ -500,8 +500,8 @@ def get_region_boxes_general(output, model, conf_thresh, name=None, img_size=416
                 conf = boxes[:,4]
                 cls_idx = boxes[:,5]
 
-                # YOLOv5返回的conf是obj_conf*cls_conf的结果，没有单独的obj_conf和cls_conf
-                # 可以将obj_conf = conf, cls_conf = conf, 与YOLOv3保持一致的结构
+                # YOLOv5 returns conf as obj_conf*cls_conf product, no separate obj_conf and cls_conf
+                # Set obj_conf = conf, cls_conf = conf to maintain consistent structure with YOLOv3
                 combined_boxes = torch.stack([x_c, y_c, w, h, conf, conf, cls_idx], dim=1)
             else:
                 combined_boxes = torch.empty((0,7), device=boxes.device)

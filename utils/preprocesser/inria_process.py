@@ -29,7 +29,7 @@ def process_GT_label(args):
                w, h = size[:2]
             if str_XY in line:
                strlist = line.split(str_XY)
-               strlist1 = "".join(strlist[1:])    # 把list转为str
+               strlist1 = "".join(strlist[1:])    # Convert list to string
                strlist1 = strlist1.replace(':', '')
                strlist1 = strlist1.replace('-', '')
                strlist1 = strlist1.replace('(', '')
