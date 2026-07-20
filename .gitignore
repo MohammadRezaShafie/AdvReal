@@ -25,3 +25,8 @@ detlib/HHDet/yolov11/*
 # 4. Finally, un-ignore the specific API files
 !detlib/HHDet/yolov5/api.py
 !detlib/HHDet/yolov11/api.py
+
+positron_CCTV
+
+cctv_backgrounds
+visualization_of_training_process
