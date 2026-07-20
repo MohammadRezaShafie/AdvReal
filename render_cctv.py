@@ -44,7 +44,7 @@ def main():
 
     # 3. Setup Camera (Steep elevation for CCTV)
     dist = 2.5 # distance
-    elev = 65.0 # Top-down CCTV angle (adjustable to match exact camera angle)
+    elev =55.0 # Top-down CCTV angle (adjustable to match exact camera angle)
     
     raster_settings = RasterizationSettings(image_size=512, blur_radius=0.0, faces_per_pixel=1)
     lights = AmbientLights(device=device)
@@ -58,15 +58,17 @@ def main():
     
     # We will render a few persons at different azimuths and locations
     placements = [
-        {"pos": (600, 300), "azim": 45.0, "scale": 0.4},
-        {"pos": (400, 500), "azim": -120.0, "scale": 0.6},
-        {"pos": (900, 450), "azim": 15.0, "scale": 0.5}
+        {"pos": (1000, 0), "azim": 45.0, "scale": 2, "crop_bottom": 0.0},
+        # Example: Person behind a counter, crop bottom 40% of their body
+        {"pos": (400, 500), "azim": -120.0, "scale": 2, "crop_bottom": 0.4},
+        {"pos": (1850, 300), "azim": -55.0, "scale": 2, "crop_bottom": 0.0}
     ]
 
     for p in placements:
         x1, y1 = p["pos"]
         azim = p["azim"]
         scale_factor = p["scale"]
+        crop_bottom = p.get("crop_bottom", 0.0)
         
         R, T = look_at_view_transform(dist=dist, elev=elev, azim=azim)
         cameras = FoVPerspectiveCameras(device=device, R=R, T=T, fov=45)
@@ -109,6 +111,13 @@ def main():
         rendered_alpha = F.interpolate(rendered_alpha.unsqueeze(0), size=(new_H, new_W), mode='bilinear', align_corners=False).squeeze(0)
         
         mask = (rendered_alpha > 0.5).float()
+        
+        # --- Simulate Occlusion (Counter) ---
+        # If the person is behind a counter, we erase the bottom part of their mask
+        # so the background (the counter) shows through.
+        if crop_bottom > 0:
+            crop_pixels = int(new_H * crop_bottom)
+            mask[0, (new_H - crop_pixels):, :] = 0.0
         
         x2 = x1 + new_W
         y2 = y1 + new_H
