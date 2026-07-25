@@ -43,8 +43,8 @@ def main():
     mesh_trouser = load_objs_as_meshes([obj_filename_trouser], device=device)
 
     # 3. Setup Camera (Steep elevation for CCTV)
-    dist = 2.5 # distance
-    elev =55.0 # Top-down CCTV angle (adjustable to match exact camera angle)
+    default_dist = 2.5 # default distance
+    elev = 55.0 # Top-down CCTV angle (adjustable to match exact camera angle)
     
     raster_settings = RasterizationSettings(image_size=512, blur_radius=0.0, faces_per_pixel=1)
     lights = AmbientLights(device=device)
@@ -56,19 +56,21 @@ def main():
     
     composite_image = bg_tensor.clone()
     
-    # We will render a few persons at different azimuths and locations
+    # We will render a few persons at different azimuths, distances and locations
     placements = [
-        {"pos": (1000, 0), "azim": 45.0, "scale": 2, "crop_bottom": 0.0},
+        {"pos": (1400, 0), "azim": 45.0, "scale": 2, "dist": 3.5, "crop_top": 0.0, "crop_bottom": 0.0},
         # Example: Person behind a counter, crop bottom 40% of their body
-        {"pos": (400, 500), "azim": -120.0, "scale": 2, "crop_bottom": 0.4},
-        {"pos": (1850, 300), "azim": -55.0, "scale": 2, "crop_bottom": 0.0}
+        {"pos": (400, 500), "azim": -120.0, "scale": 2, "dist": 2.5, "crop_top": 0.0, "crop_bottom": 0.4},
+        {"pos": (1850, 300), "azim": -55.0, "scale": 2, "dist": 2.5, "crop_top": 0.1, "crop_bottom": 0.0}
     ]
 
     for p in placements:
         x1, y1 = p["pos"]
         azim = p["azim"]
         scale_factor = p["scale"]
+        dist = p.get("dist", default_dist)
         crop_bottom = p.get("crop_bottom", 0.0)
+        crop_top = p.get("crop_top", 0.0)
         
         R, T = look_at_view_transform(dist=dist, elev=elev, azim=azim)
         cameras = FoVPerspectiveCameras(device=device, R=R, T=T, fov=45)
@@ -112,12 +114,16 @@ def main():
         
         mask = (rendered_alpha > 0.5).float()
         
-        # --- Simulate Occlusion (Counter) ---
-        # If the person is behind a counter, we erase the bottom part of their mask
-        # so the background (the counter) shows through.
+        # --- Simulate Occlusion (Counters, Overhanging objects, etc.) ---
+        # Erase bottom part of mask (e.g. standing behind counter)
         if crop_bottom > 0:
             crop_pixels = int(new_H * crop_bottom)
             mask[0, (new_H - crop_pixels):, :] = 0.0
+
+        # Erase top part of mask (e.g. head occluded by signs, frames, top of doorway)
+        if crop_top > 0:
+            crop_pixels = int(new_H * crop_top)
+            mask[0, :crop_pixels, :] = 0.0
         
         x2 = x1 + new_W
         y2 = y1 + new_H
