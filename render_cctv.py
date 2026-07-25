@@ -26,7 +26,10 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def main():
     # 1. Load background
-    bg_path = 'cctv_backgrounds/D01_20241010232332.jpg'
+    bg_path_D1 = 'cctv_backgrounds/D01_20241010232332.jpg'
+    bg_path_D4 = 'cctv_backgrounds/D04_20241012110754.jpg'
+
+    bg_path = bg_path_D4
     bg_image = Image.open(bg_path).convert('RGB')
     transform = transforms.ToTensor()
     bg_tensor = transform(bg_image).to(device)
@@ -57,14 +60,23 @@ def main():
     composite_image = bg_tensor.clone()
     
     # We will render a few persons at different azimuths, distances and locations
-    placements = [
-        {"pos": (1400, 0), "azim": 45.0, "scale": 2, "dist": 3.5, "crop_top": 0.0, "crop_bottom": 0.0},
+    placements_D1 = [
+        {"pos": (1060, 0), "azim": 45.0, "scale": 2.2, "dist": 2.8, "crop_top": 0.0, "crop_bottom": 0.0},
         # Example: Person behind a counter, crop bottom 40% of their body
-        {"pos": (400, 500), "azim": -120.0, "scale": 2, "dist": 2.5, "crop_top": 0.0, "crop_bottom": 0.4},
-        {"pos": (1850, 300), "azim": -55.0, "scale": 2, "dist": 2.5, "crop_top": 0.1, "crop_bottom": 0.0}
+        {"pos": (600, 400), "azim": -120.0, "scale": 2, "dist": 2.2, "crop_top": 0.0, "crop_bottom": 0.0},
+        {"pos": (1850, 300), "azim": -55.0, "scale": 2, "dist": 2.4, "crop_top": 0.0, "crop_bottom": 0.0}
     ]
 
-    for p in placements:
+    placements_D4 = [
+        {"pos": (900, 120), "azim": 45.0, "scale": 2.2, "dist": 2.7, "crop_top": 0.0, "crop_bottom": 0.0},
+        # Example: Person behind a counter, crop bottom 40% of their body
+        {"pos": (300, 350), "azim": -120.0, "scale": 2, "dist": 2.6, "crop_top": 0.0, "crop_bottom": 0.0},
+        {"pos": (650, 100), "azim": -220.0, "scale": 2, "dist": 3.4, "crop_top": 0.0, "crop_bottom": 0.0},
+        {"pos": (1300, 700), "azim": 140.0, "scale": 2, "dist": 2, "crop_top": 0.0, "crop_bottom": 0.0},
+        {"pos": (1700, 0), "azim": 40.0, "scale": 2, "dist": 3, "crop_top": 0.0, "crop_bottom": 0.45}
+    ]
+
+    for p in placements_D4:
         x1, y1 = p["pos"]
         azim = p["azim"]
         scale_factor = p["scale"]
@@ -135,7 +147,7 @@ def main():
         composite_crop = mask * rendered_rgb + (1 - mask) * bg_crop
         composite_image[:, y1:y2, x1:x2] = composite_crop
 
-    out_path = 'cctv_test_render.jpg'
+    out_path = 'D4_cctv_test_render.jpg'
     save_image(composite_image, out_path)
     print(f"✅ Saved composite test image to {out_path}")
 
