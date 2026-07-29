@@ -1,7 +1,10 @@
 import torch
 import numpy as np
 # Import Ultralytics NMS as 'ul_nms' to avoid conflict with legacy YOLOv5 functions
-from ultralytics.utils.ops import non_max_suppression as ul_nms
+try:
+    from ultralytics.utils.ops import non_max_suppression as ul_nms
+except ImportError:
+    from ultralytics.nn.autobackend import non_max_suppression as ul_nms
 from ...base import DetectorBase
 
 class HHYolov11(DetectorBase):
